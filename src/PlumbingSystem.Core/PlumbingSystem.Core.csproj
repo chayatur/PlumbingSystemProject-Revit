@@ -1,0 +1,14 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <TargetFramework>net10.0</TargetFramework>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+    <RootNamespace>PlumbingSystem.Core</RootNamespace>
+    <AssemblyName>PlumbingSystem.Core</AssemblyName>
+    <!-- Core הוא "טהור" - בלי תלות ב-Revit ובלי -windows, כדי שיהיה ניתן
+         לבנות ולבדוק אותו (dotnet test) גם על מכונה בלי Revit מותקן. -->
+    <GenerateDocumentationFile>true</GenerateDocumentationFile>
+  </PropertyGroup>
+
+</Project>

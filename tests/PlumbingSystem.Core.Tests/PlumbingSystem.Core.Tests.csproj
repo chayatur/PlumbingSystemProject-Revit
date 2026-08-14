@@ -1,0 +1,28 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <TargetFramework>net10.0</TargetFramework>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+    <RootNamespace>PlumbingSystem.Core.Tests</RootNamespace>
+    <IsPackable>false</IsPackable>
+    <IsTestProject>true</IsTestProject>
+    <!-- xunit.v3 מריץ את הבדיקות דרך Microsoft.Testing.Platform, שדורש exe ולא dll. -->
+    <OutputType>Exe</OutputType>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <!-- xunit 2.x (netstandard1.1) לא נפתר נכון מול net10.0 - xunit.v3 היא הגרסה
+         הנתמכת רשמית ל-.NET 8 ומעלה, כולל net10.0. -->
+    <PackageReference Include="Microsoft.NET.Test.Sdk" Version="17.14.1" />
+    <PackageReference Include="xunit.v3" Version="3.2.2" />
+    <PackageReference Include="xunit.runner.visualstudio" Version="3.1.5" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <!-- רק Core - ל-Tests אין ואסור שיהיה קשר ל-Revit API, כדי שהבדיקות
+         ירוצו על כל מכונה (כולל שרת CI) בלי Revit מותקן. -->
+    <ProjectReference Include="..\..\src\PlumbingSystem.Core\PlumbingSystem.Core.csproj" />
+  </ItemGroup>
+
+</Project>

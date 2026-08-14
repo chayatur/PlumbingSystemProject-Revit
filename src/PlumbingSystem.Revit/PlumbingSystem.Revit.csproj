@@ -1,0 +1,64 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <TargetFramework>net10.0-windows</TargetFramework>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+    <RootNamespace>PlumbingSystem.Revit</RootNamespace>
+    <AssemblyName>PlumbingSystem.Revit</AssemblyName>
+    <GenerateDocumentationFile>true</GenerateDocumentationFile>
+    <!-- Revit טוען את ה-Add-in כ-DLL רגיל, לא כאפליקציה - אין צורך ב-exe. -->
+    <OutputType>Library</OutputType>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\PlumbingSystem.Core\PlumbingSystem.Core.csproj" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <!-- RevitAPI.dll / RevitAPIUI.dll מגיעות מהתקנת Revit על המחשב שמריץ אותו,
+         ולכן Private=False (HintPath בלבד, בלי להעתיק ל-bin). אם יועתקו,
+         עלול להיווצר קונפליקט גרסאות מול ה-DLL שכבר טעון בתהליך של Revit. -->
+    <Reference Include="RevitAPI">
+      <HintPath>C:\Program Files\Autodesk\Revit 2027\RevitAPI.dll</HintPath>
+      <Private>false</Private>
+    </Reference>
+    <Reference Include="RevitAPIUI">
+      <HintPath>C:\Program Files\Autodesk\Revit 2027\RevitAPIUI.dll</HintPath>
+      <Private>false</Private>
+    </Reference>
+  </ItemGroup>
+
+  <ItemGroup>
+    <None Include="PlumbingSystem.addin">
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+    </None>
+  </ItemGroup>
+
+  <PropertyGroup>
+    <!-- תיקיית ה-Add-ins הפר-משתמשית שממנה Revit 2027 טוען manifests בעליה.
+         NOTE: זו לא $(ProgramData)! ה-journal של Revit (journal.0013.txt)
+         מראה בפירוש שהוא דוחה manifest מ-%ProgramData%\Autodesk\Revit\Addins\2027
+         עם ההודעה "All-users Add-in manifest files must be installed to:
+         C:\Program Files\Autodesk\Revit\Addins\2027" - אבל לתיקייה הזו
+         (תחת Program Files) אין הרשאת כתיבה למשתמש רגיל בלי הרשאת
+         Administrator. לכן משתמשים בתיקיית ה-Add-ins הפר-משתמשית
+         (Roaming AppData), שכן ניתנת לכתיבה וכבר קיימת (Revit עצמו יצר
+         אותה בהתקנה). -->
+    <RevitAddinsDir>$(AppData)\Autodesk\Revit\Addins\2027\</RevitAddinsDir>
+  </PropertyGroup>
+
+  <!-- מעתיק את ה-DLL (וה-PDB אם קיים) ואת ה-manifest לתיקיית ה-Add-ins של
+       Revit אחרי כל build, כדי שלא יהיה צורך להעתיק ידנית בכל פעם ולוודא
+       ש-Revit תמיד רואה את הגרסה העדכנית ביותר. -->
+  <Target Name="CopyAddinToRevit" AfterTargets="Build">
+    <ItemGroup>
+      <RevitAddinFiles Include="$(TargetDir)$(AssemblyName).dll" />
+      <RevitAddinFiles Include="$(TargetDir)$(AssemblyName).pdb" Condition="Exists('$(TargetDir)$(AssemblyName).pdb')" />
+      <RevitAddinFiles Include="$(ProjectDir)PlumbingSystem.addin" />
+    </ItemGroup>
+    <MakeDir Directories="$(RevitAddinsDir)" Condition="!Exists('$(RevitAddinsDir)')" />
+    <Copy SourceFiles="@(RevitAddinFiles)" DestinationFolder="$(RevitAddinsDir)" SkipUnchangedFiles="false" />
+  </Target>
+
+</Project>

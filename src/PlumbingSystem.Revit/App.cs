@@ -1,0 +1,99 @@
+using Autodesk.Revit.Attributes;
+using Autodesk.Revit.UI;
+using PlumbingSystem.Revit.Commands;
+
+namespace PlumbingSystem.Revit;
+
+/// <summary>
+/// נקודת הכניסה של ה-Add-in ל-Revit. אחראית על רישום ממשק המשתמש בריבון
+/// (טאב, פאנל, כפתורים) בעת עליית Revit, ועל שחרור משאבים בעת סגירתו.
+/// זו המחלקה שה-manifest (PlumbingSystem.addin) מצביע אליה דרך FullClassName.
+/// </summary>
+public class App : IExternalApplication
+{
+    private const string TabName = "Startarc";
+    private const string PanelName = "אינסטלציה";
+
+    /// <summary>
+    /// נקרא פעם אחת בעת עליית Revit. יוצר את לשונית "Startarc", בתוכה פאנל
+    /// "אינסטלציה", ובתוכו כפתור "בדיקת חיבור" שמריץ את
+    /// <see cref="ReadElementsCommand"/> (בדיקת שפיות שמוודאת שה-Add-in
+    /// נטען, ה-manifest תקין וה-References ל-Revit API עובדים), וכפתור
+    /// "אבחון מודל" שמריץ את <see cref="DiscoverModelCommand"/> - כפתור
+    /// אבחון **זמני** שיוסר כשלוגיקת הסיווג האמיתית תיבנה (ראו התיעוד
+    /// על <see cref="DiscoverModelCommand"/> עצמה), כפתור "בנה מודל
+    /// דומיין" שמריץ את <see cref="BuildDomainModelCommand"/>, כפתור
+    /// "בנה קולטנים" שמריץ את <see cref="BuildCollectorsCommand"/>
+    /// (דוח בלבד, ReadOnly), כפתור "מקם קולטנים ב-Revit" שמריץ את
+    /// <see cref="PlaceCollectorsCommand"/> (כותב אלמנטים בפועל למודל),
+    /// וכפתור "צייר צינורות" שמריץ את <see cref="DrawPipesCommand"/>
+    /// (שלב 7 - מקטעי צינור בין אסלה לקולטן).
+    /// </summary>
+    /// <param name="application">אובייקט הבקרה של Revit UI שדרכו נרשמים רכיבי הריבון.</param>
+    /// <returns><see cref="Result.Succeeded"/> אם רישום הריבון הצליח.</returns>
+    public Result OnStartup(UIControlledApplication application)
+    {
+        application.CreateRibbonTab(TabName);
+
+        RibbonPanel panel = application.CreateRibbonPanel(TabName, PanelName);
+
+        // נדרש הנתיב המלא ל-DLL הנוכחי כדי ש-Revit ידע מאיפה לטעון את הפקודה בזמן לחיצה.
+        string assemblyPath = System.Reflection.Assembly.GetExecutingAssembly().Location;
+
+        var readElementsButtonData = new PushButtonData(
+            "ReadElementsCommand",
+            "בדיקת חיבור",
+            assemblyPath,
+            typeof(ReadElementsCommand).FullName);
+
+        var discoverModelButtonData = new PushButtonData(
+            "DiscoverModelCommand",
+            "אבחון מודל",
+            assemblyPath,
+            typeof(DiscoverModelCommand).FullName);
+
+        var buildDomainModelButtonData = new PushButtonData(
+            "BuildDomainModelCommand",
+            "בנה מודל דומיין",
+            assemblyPath,
+            typeof(BuildDomainModelCommand).FullName);
+
+        var buildCollectorsButtonData = new PushButtonData(
+            "BuildCollectorsCommand",
+            "בנה קולטנים",
+            assemblyPath,
+            typeof(BuildCollectorsCommand).FullName);
+
+        var placeCollectorsButtonData = new PushButtonData(
+            "PlaceCollectorsCommand",
+            "מקם קולטנים ב-Revit",
+            assemblyPath,
+            typeof(PlaceCollectorsCommand).FullName);
+
+        var drawPipesButtonData = new PushButtonData(
+            "DrawPipesCommand",
+            "צייר צינורות",
+            assemblyPath,
+            typeof(DrawPipesCommand).FullName);
+
+        panel.AddItem(readElementsButtonData);
+        panel.AddItem(discoverModelButtonData);
+        panel.AddItem(buildDomainModelButtonData);
+        panel.AddItem(buildCollectorsButtonData);
+        panel.AddItem(placeCollectorsButtonData);
+        panel.AddItem(drawPipesButtonData);
+
+        return Result.Succeeded;
+    }
+
+    /// <summary>
+    /// נקרא פעם אחת בעת סגירת Revit. בשלב הנוכחי אין event handlers, קבצים
+    /// פתוחים או משאבים חיצוניים אחרים לשחרר, ולכן רק מחזירה הצלחה.
+    /// </summary>
+    /// <param name="application">אובייקט הבקרה של Revit UI.</param>
+    /// <returns><see cref="Result.Succeeded"/>.</returns>
+    public Result OnShutdown(UIControlledApplication application)
+    {
+        return Result.Succeeded;
+    }
+}

@@ -1,0 +1,16 @@
+# .NET build output
+bin/
+obj/
+*.user
+*.suo
+
+# Visual Studio / Rider / VS Code
+.vs/
+.idea/
+*.DotSettings.user
+
+# Test results
+TestResults/
+
+# Claude Code local session settings (machine/session-specific, not shared project config)
+.claude/settings.local.json
