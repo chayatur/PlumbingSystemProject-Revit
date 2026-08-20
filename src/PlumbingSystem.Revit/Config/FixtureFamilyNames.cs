@@ -26,6 +26,11 @@ public static class FixtureFamilyNames
     /// לא Contains). רשימה ולא מחרוזת בודדת, כי בפרויקטים עתידיים
     /// יכולות להיות כמה משפחות אסלה שונות (יצרנים/דגמים שונים) שכולן
     /// צריכות להיכנס לאותה לוגיקת זיהוי.
+    ///
+    /// זו כבר לא נקודת-הזיהוי הראשית - <see cref="RevitModelReader.IsToiletFixture"/>
+    /// בודק קודם Type Parameter (<c>Is_Toilet</c>, Yes/No) על ה-FamilySymbol.
+    /// הרשימה הזו נשארת כ-Fallback עבור Types שעדיין לא קיבלו את הפרמטר
+    /// (כולל הפרויקט הנוכחי, נכון לעכשיו) - ראו האזהרות ב-Warnings בזמן ריצה.
     /// </summary>
     public static readonly IReadOnlyList<string> ToiletFamilyNames = new List<string>
     {

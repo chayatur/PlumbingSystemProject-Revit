@@ -84,20 +84,24 @@ public class PipeRouteCalculatorTests
 
     /// <summary>
     /// מקרה עם חסימה: קיר שחוצה את המסלול הישר בין אסלה לקולטן (מרחק
-    /// אופקי ריאלי, 3 מ' - בתוך המגבלה הפיזית). מוודאת שמתקבלים בדיוק
+    /// אופקי 2.5 מ' - **לא** 3 מ' כמו בגרסה קודמת של הבדיקה: בזווית
+    /// 90° הכוללת (תיקון-ציות-לתקן, ראו <see cref="PipeRouteCalculator.DetourHalfBendAngleDegrees"/>)
+    /// אורך-המסלול-בפועל הוא <c>R/cos(45°)≈1.414×R</c> - מרחק ישר של
+    /// 3 מ' היה נותן ~4.24 מ', חורג מהמגבלה הפיזית 4.0 מ'; 2.5 מ' נותן
+    /// ~3.54 מ', בתוך המגבלה עם מרווח בטוח). מוודאת שמתקבלים בדיוק
     /// שני מקטעים רציפים (סוף המקטע הראשון = תחילת השני), ששניהם
-    /// בטווח השיפוע התקין, ושזווית-החיבור ביניהם **בדיוק** 45° (לא
+    /// בטווח השיפוע התקין, ושזווית-החיבור ביניהם **בדיוק** 90° (לא
     /// "בסביבות" - הבנייה מבטיחה את זה מתמטית, ראו התיעוד ב-
     /// <see cref="PipeRouteCalculator.CalculateDetour"/> לגבי המקרה
     /// הקודם שנתן 67.01° בטעות).
     /// </summary>
     [Fact]
-    public void CalculateDetour_WithBlockingWall_ReturnsTwoConnectedSegmentsWithExactly45DegreeAngle()
+    public void CalculateDetour_WithBlockingWall_ReturnsTwoConnectedSegmentsWithExactly90DegreeAngle()
     {
         var fixture = new ToiletFixture("toilet-1", new Point3D(0, 0, 10), "apt-1", isGuestBathroom: true);
-        var collector = new CollectorPoint("COL-toilet-1", new Point3D(3, 0, 10), new List<string> { "apt-1" });
+        var collector = new CollectorPoint("COL-toilet-1", new Point3D(2.5, 0, 10), new List<string> { "apt-1" });
         var blockingWall = new WallEdgeSnapper.WallSegment(
-            "wall-1", new Point3D(1.5, 0.5, 0), new Point3D(1.5, 5, 0));
+            "wall-1", new Point3D(1.25, 0.5, 0), new Point3D(1.25, 5, 0));
 
         IReadOnlyList<PipeSegment> route = PipeRouteCalculator.CalculateDetour(fixture, collector, blockingWall);
 
@@ -131,8 +135,8 @@ public class PipeRouteCalculatorTests
         double cosAngle = ((leg1DirX * leg2DirX) + (leg1DirY * leg2DirY)) / (leg1Length * leg2Length);
         double angleDegrees = Math.Acos(Math.Clamp(cosAngle, -1.0, 1.0)) * (180.0 / Math.PI);
 
-        // מהבנייה עצמה - לא "בטווח סביר", אלא כמעט בדיוק 45° (עד דיוק floating-point).
-        Assert.Equal(45.0, angleDegrees, precision: 6);
+        // מהבנייה עצמה - לא "בטווח סביר", אלא כמעט בדיוק 90° (עד דיוק floating-point).
+        Assert.Equal(90.0, angleDegrees, precision: 6);
         Assert.InRange(angleDegrees, PipeRouteCalculator.MinDetourAngleDegrees, PipeRouteCalculator.MaxDetourAngleDegrees);
 
         // Ids רציפים על בסיס אותו route id משותף.
@@ -144,17 +148,18 @@ public class PipeRouteCalculatorTests
     /// <summary>
     /// <c>useOppositeSide=true</c> חייב לתת waypoint שונה (הצד השני,
     /// תמונת-ראי) - לא את אותה תוצאה כמו ברירת-המחדל - אבל עדיין
-    /// בזווית 45° מדויקת. זה מה ש-PlumbingSystem.Revit צריך: אפשרות
+    /// בזווית 90° מדויקת. זה מה ש-PlumbingSystem.Revit צריך: אפשרות
     /// אמיתית לנסות צד שני כשהראשון עדיין חוסם קיר, לא רק "לנחש" שאין
-    /// פתרון.
+    /// פתרון. מרחק 2.5 מ' (לא 3) - ראו הנימוק ב-
+    /// <see cref="CalculateDetour_WithBlockingWall_ReturnsTwoConnectedSegmentsWithExactly90DegreeAngle"/>.
     /// </summary>
     [Fact]
-    public void CalculateDetour_UseOppositeSide_ReturnsMirroredWaypointWithExactly45DegreeAngle()
+    public void CalculateDetour_UseOppositeSide_ReturnsMirroredWaypointWithExactly90DegreeAngle()
     {
         var fixture = new ToiletFixture("toilet-1", new Point3D(0, 0, 10), "apt-1", isGuestBathroom: true);
-        var collector = new CollectorPoint("COL-toilet-1", new Point3D(3, 0, 10), new List<string> { "apt-1" });
+        var collector = new CollectorPoint("COL-toilet-1", new Point3D(2.5, 0, 10), new List<string> { "apt-1" });
         var blockingWall = new WallEdgeSnapper.WallSegment(
-            "wall-1", new Point3D(1.5, 0.5, 0), new Point3D(1.5, 5, 0));
+            "wall-1", new Point3D(1.25, 0.5, 0), new Point3D(1.25, 5, 0));
 
         IReadOnlyList<PipeSegment> preferredSide = PipeRouteCalculator.CalculateDetour(fixture, collector, blockingWall);
         IReadOnlyList<PipeSegment> oppositeSide = PipeRouteCalculator.CalculateDetour(
@@ -173,21 +178,24 @@ public class PipeRouteCalculatorTests
         double cosAngle = ((leg1DirX * leg2DirX) + (leg1DirY * leg2DirY)) / (leg1Length * leg2Length);
         double angleDegrees = Math.Acos(Math.Clamp(cosAngle, -1.0, 1.0)) * (180.0 / Math.PI);
 
-        Assert.Equal(45.0, angleDegrees, precision: 6);
+        Assert.Equal(90.0, angleDegrees, precision: 6);
     }
 
     /// <summary>
     /// <c>useWallDirectionAsReference=true</c> עם קיר שאינו מקביל/מאונך
     /// ל-D (הקו הישר) - חייב לתת waypoint **שונה** מ-ברירת-המחדל (D
-    /// כייחוס), אבל עדיין בזווית **בדיוק** 45° ועדיין מגיע בדיוק
+    /// כייחוס), אבל עדיין בזווית **בדיוק** 90° ועדיין מגיע בדיוק
     /// לקואורדינטות הקולטן - מוודא שהחלופה הזו (זווית ביחס לכיוון-
     /// הקיר, לא לקו המקורי) עובדת נכון גיאומטרית, לא רק "לא זורקת".
+    /// מרחק 2.5 מ' (לא 3) - ראו הנימוק ב-
+    /// <see cref="CalculateDetour_WithBlockingWall_ReturnsTwoConnectedSegmentsWithExactly90DegreeAngle"/>;
+    /// זווית-הקיר עצמה (~11° מ-D) לא תלויה במרחק אסלה-קולטן, אז נשארה כמו שהיא.
     /// </summary>
     [Fact]
     public void CalculateDetour_UseWallDirectionAsReference_ProducesDifferentButStillValidWaypoint()
     {
         var fixture = new ToiletFixture("toilet-1", new Point3D(0, 0, 10), "apt-1", isGuestBathroom: true);
-        var collector = new CollectorPoint("COL-toilet-1", new Point3D(3, 0, 10), new List<string> { "apt-1" });
+        var collector = new CollectorPoint("COL-toilet-1", new Point3D(2.5, 0, 10), new List<string> { "apt-1" });
         // קיר "אלכסוני" עדין (~11° מ-D) - לא מקביל ל-D=(1,0) ולא מאונך לו,
         // אבל גם לא רחוק מדי (זווית-קיר גדולה מדי הופכת את ההצטלבות
         // ל"אחורה" - ראו התיעוד על מגבלת useWallDirectionAsReference).
@@ -203,20 +211,25 @@ public class PipeRouteCalculatorTests
             || Math.Abs(dReferenceRoute[0].EndPoint.Y - wallReferenceRoute[0].EndPoint.Y) > 1e-6;
         Assert.True(waypointsDiffer, "ציפינו ל-waypoint שונה כשה-reference הוא כיוון-הקיר, לא D.");
 
-        // עדיין מגיע בדיוק לקולטן, ועדיין זווית בדיוק 45°.
+        // עדיין מגיע בדיוק לקולטן, ועדיין זווית בדיוק 90°.
         Assert.Equal(collector.Location.X, wallReferenceRoute[1].EndPoint.X, precision: 6);
         Assert.Equal(collector.Location.Y, wallReferenceRoute[1].EndPoint.Y, precision: 6);
 
         double angleDegrees = AngleBetweenDegrees(wallReferenceRoute[0], wallReferenceRoute[1]);
-        Assert.Equal(45.0, angleDegrees, precision: 6);
+        Assert.Equal(90.0, angleDegrees, precision: 6);
     }
 
-    /// <summary>אותה בדיקה כמו לעיל, עבור מסלול "Y מדורג" - waypoint שונה, אבל עדיין שני בנים בדיוק 22.5° ועדיין מגיע לקולטן.</summary>
+    /// <summary>
+    /// אותה בדיקה כמו לעיל, עבור מסלול "Y מדורג" - waypoint שונה, אבל עדיין שני בנים בדיוק
+    /// <see cref="PipeRouteCalculator.StaggeredDetourBendAngleDegrees"/> ועדיין מגיע לקולטן.
+    /// מרחק 2.5 מ' (לא 3) - ראו הנימוק ב-
+    /// <see cref="CalculateDetour_WithBlockingWall_ReturnsTwoConnectedSegmentsWithExactly90DegreeAngle"/>.
+    /// </summary>
     [Fact]
     public void CalculateStaggeredDetour_UseWallDirectionAsReference_ProducesDifferentButStillValidRoute()
     {
         var fixture = new ToiletFixture("toilet-1", new Point3D(0, 0, 10), "apt-1", isGuestBathroom: true);
-        var collector = new CollectorPoint("COL-toilet-1", new Point3D(3, 0, 10), new List<string> { "apt-1" });
+        var collector = new CollectorPoint("COL-toilet-1", new Point3D(2.5, 0, 10), new List<string> { "apt-1" });
         var blockingWall = new WallEdgeSnapper.WallSegment(
             "wall-1", new Point3D(1, 0.3, 0), new Point3D(2, 0.5, 0));
 
@@ -291,13 +304,15 @@ public class PipeRouteCalculatorTests
     /// מקרה תקין: 3 מקטעים רציפים (אסלה→waypoint1→waypoint2→קולטן),
     /// כל אחד מהבנים (leg1-crossover, crossover-leg3) הוא **בדיוק**
     /// <see cref="PipeRouteCalculator.StaggeredDetourBendAngleDegrees"/>
-    /// (22.5°) - לא קירוב - ומגיע **בדיוק** לקואורדינטות הקולטן.
+    /// (45°) - לא קירוב - ומגיע **בדיוק** לקואורדינטות הקולטן. מרחק
+    /// 2.5 מ' (לא 3) - ראו הנימוק ב-
+    /// <see cref="CalculateDetour_WithBlockingWall_ReturnsTwoConnectedSegmentsWithExactly90DegreeAngle"/>.
     /// </summary>
     [Fact]
     public void CalculateStaggeredDetour_ValidCrossoverLength_ReturnsThreeConnectedSegmentsWithExactBendAngles()
     {
         var fixture = new ToiletFixture("toilet-1", new Point3D(0, 0, 10), "apt-1", isGuestBathroom: true);
-        var collector = new CollectorPoint("COL-toilet-1", new Point3D(3, 0, 10), new List<string> { "apt-1" });
+        var collector = new CollectorPoint("COL-toilet-1", new Point3D(2.5, 0, 10), new List<string> { "apt-1" });
         var blockingWall = new WallEdgeSnapper.WallSegment(
             "wall-1", new Point3D(1.5, 0.5, 0), new Point3D(1.5, 5, 0));
 
@@ -331,7 +346,7 @@ public class PipeRouteCalculatorTests
             Assert.InRange(segment.SlopePercent, PipeRouteCalculator.MinSlopePercent, PipeRouteCalculator.MaxSlopePercent);
         }
 
-        // שני הבנים (leg1->crossover, crossover->leg3) הם בדיוק β=22.5°.
+        // שני הבנים (leg1->crossover, crossover->leg3) הם בדיוק β=45°.
         double bend1 = AngleBetweenDegrees(leg1, crossover);
         double bend2 = AngleBetweenDegrees(crossover, leg3);
         Assert.Equal(PipeRouteCalculator.StaggeredDetourBendAngleDegrees, bend1, precision: 6);

@@ -5,6 +5,7 @@ using Autodesk.Revit.Attributes;
 using Autodesk.Revit.DB;
 using Autodesk.Revit.DB.Architecture;
 using Autodesk.Revit.UI;
+using PlumbingSystem.Revit.Config;
 
 namespace PlumbingSystem.Revit.Commands;
 
@@ -51,9 +52,11 @@ public class DiscoverModelCommand : IExternalCommand
             .WhereElementIsNotElementType()
             .ToList();
 
-        AppendFixturesSection(sb, doc, "1. Plumbing fixtures in the HOST document", hostFixtures);
+        AppendToiletSummaryPerLevel(sb, doc, hostFixtures);
+        AppendRoomsPerLevel(sb, doc);
+        AppendFixturesSection(sb, doc, "3. Plumbing fixtures in the HOST document (full detail)", hostFixtures);
 
-        // 2. RevitLinkInstance-ים במסמך הראשי + סטטוס טעינה - כדי לשלול
+        // 4. RevitLinkInstance-ים במסמך הראשי + סטטוס טעינה - כדי לשלול
         //    שהגיאומטריה בפועל יושבת בקובץ מקושר ולא במסמך הראשי.
         List<RevitLinkInstance> linkInstances = new FilteredElementCollector(doc)
             .OfClass(typeof(RevitLinkInstance))
@@ -61,7 +64,7 @@ public class DiscoverModelCommand : IExternalCommand
             .ToList();
 
         sb.AppendLine();
-        sb.AppendLine("--- 2. RevitLinkInstance elements in the host document ---");
+        sb.AppendLine("--- 4. RevitLinkInstance elements in the host document ---");
         sb.AppendLine($"Found: {linkInstances.Count}");
         foreach (RevitLinkInstance linkInstance in linkInstances)
         {
@@ -73,9 +76,9 @@ public class DiscoverModelCommand : IExternalCommand
             sb.AppendLine($"  '{title}': status={status}");
         }
 
-        // 3. עבור קישורים טעונים בלבד - אלמנטי OST_PlumbingFixtures בתוכם.
+        // 5. עבור קישורים טעונים בלבד - אלמנטי OST_PlumbingFixtures בתוכם.
         sb.AppendLine();
-        sb.AppendLine("--- 3. Plumbing fixtures inside LOADED linked documents ---");
+        sb.AppendLine("--- 5. Plumbing fixtures inside LOADED linked documents ---");
 
         List<Document> loadedLinkDocs = linkInstances
             .Select(li => li.GetLinkDocument())
@@ -108,6 +111,133 @@ public class DiscoverModelCommand : IExternalCommand
         Process.Start(new ProcessStartInfo(path) { UseShellExecute = true });
 
         return Result.Succeeded;
+    }
+
+    /// <summary>
+    /// סעיף 1: טבלה מסכמת לכל Level - כמה אלמנטים מזוהים כ"אסלה" לפי
+    /// הזיהוי-הנוכחי (<see cref="FixtureFamilyNames.ToiletFamilyNames"/> -
+    /// אותה השוואת-שם-מדויקת כמו <see cref="RevitModelReader.IsToiletFixture"/>,
+    /// בלי הבדיקה של Type Parameter <c>Is_Toilet</c> כי זו מטרתה של
+    /// הפקודה הזו - נתון גולמי, לא תלוי-בלוגיקת-הזיהוי-המלאה), וכמה
+    /// מהן יש-Room בנקודת המיקום שלהן ("No Room found" סופר בנפרד) -
+    /// כדי לענות ישירות על "כמה אסלות בכל קומה, וכמה מהן חסומות בגלל
+    /// Room חסר" בלי צורך לספור ידנית מתוך הפירוט המלא (סעיף 3).
+    /// </summary>
+    private static void AppendToiletSummaryPerLevel(StringBuilder sb, Document doc, List<Element> hostFixtures)
+    {
+        sb.AppendLine();
+        sb.AppendLine("--- 1. Toilet summary per Level (current identification: Family.Name match) ---");
+
+        var toiletRows = hostFixtures
+            .Where(fixture => GetFamilyAndTypeName(doc, fixture).Family is string family
+                && FixtureFamilyNames.ToiletFamilyNames.Contains(family))
+            .Select(fixture =>
+            {
+                Level? level = doc.GetElement(fixture.LevelId) as Level;
+                XYZ? point = (fixture.Location as LocationPoint)?.Point;
+                bool hasRoom = point is not null && doc.GetRoomAtPoint(point) is not null;
+                return (LevelName: level?.Name ?? "(no Level)", HasRoom: hasRoom);
+            })
+            .ToList();
+
+        if (toiletRows.Count == 0)
+        {
+            sb.AppendLine("  (no elements matched the Toilet Family.Name allowlist at all)");
+            return;
+        }
+
+        var perLevel = toiletRows
+            .GroupBy(row => row.LevelName)
+            .OrderBy(group => group.Key, StringComparer.OrdinalIgnoreCase);
+
+        sb.AppendLine("  Level                          Toilets   WithRoom  NoRoomFound");
+        foreach (var group in perLevel)
+        {
+            int total = group.Count();
+            int withRoom = group.Count(row => row.HasRoom);
+            sb.AppendLine(string.Format(
+                CultureInfo.InvariantCulture,
+                "  {0,-30} {1,7}   {2,7}   {3,10}",
+                group.Key, total, withRoom, total - withRoom));
+        }
+
+        sb.AppendLine(string.Format(
+            CultureInfo.InvariantCulture,
+            "  TOTAL: {0} toilets across {1} level(s), {2} with Room, {3} with \"No Room found\".",
+            toiletRows.Count,
+            perLevel.Count(),
+            toiletRows.Count(row => row.HasRoom),
+            toiletRows.Count(row => !row.HasRoom)));
+    }
+
+    /// <summary>
+    /// סעיף 2: בודקת אם קיימים בכלל אלמנטי Room (OST_Rooms) בכל Level -
+    /// שאלה **שונה** מ"יש Room בנקודת-המיקום-של-אסלה-ספציפית" (זה כבר
+    /// נבדק בסעיף 1). Room "ממוקם" (Location != null) אבל לא-תחום
+    /// (Area==0) הוא מצב קלאסי ב-Revit של Room-tag שהוצב בלי שגבולות-
+    /// חדר (Room Boundaries) סוגרים אותו בפועל - בדיוק המצב שיכול לגרום
+    /// ל-GetRoomAtPoint להחזיר null גם כשיש "Room" טכני על אותה קומה.
+    /// מדפיסה גם פירוט **מלא לכל Room בודד** (Name, Number, Area,
+    /// LocationPoint) - לא רק ספירה - כדי לאפשר בדיקה עצמאית-לא-
+    /// מבוססת-הערכה (למשל לפני פנייה לאדריכלית עם ממצא: אילו חדרים
+    /// ספציפיים כן/לא תחומים, לא רק "כמה").
+    /// </summary>
+    private static void AppendRoomsPerLevel(StringBuilder sb, Document doc)
+    {
+        sb.AppendLine();
+        sb.AppendLine("--- 2. Room elements per Level (do Rooms exist / are they enclosed at all?) ---");
+
+        List<Room> allRooms = new FilteredElementCollector(doc)
+            .OfCategory(BuiltInCategory.OST_Rooms)
+            .WhereElementIsNotElementType()
+            .Cast<Room>()
+            .ToList();
+
+        if (allRooms.Count == 0)
+        {
+            sb.AppendLine("  (no Room elements found anywhere in the entire host document)");
+            return;
+        }
+
+        var perLevel = allRooms
+            .GroupBy(room => (doc.GetElement(room.LevelId) as Level)?.Name ?? "(no Level)")
+            .OrderBy(group => group.Key, StringComparer.OrdinalIgnoreCase);
+
+        sb.AppendLine("  Level                          TotalRooms  Enclosed(Area>0)  Unplaced/Unenclosed(Area=0)");
+        foreach (var group in perLevel)
+        {
+            int total = group.Count();
+            int enclosed = group.Count(room => room.Area > 0);
+            sb.AppendLine(string.Format(
+                CultureInfo.InvariantCulture,
+                "  {0,-30} {1,10}  {2,16}  {3,27}",
+                group.Key, total, enclosed, total - enclosed));
+        }
+
+        sb.AppendLine();
+        sb.AppendLine("  Per-Room detail (every Room element, grouped by Level, sorted by Number):");
+        foreach (var group in perLevel)
+        {
+            sb.AppendLine($"  Level '{group.Key}':");
+            foreach (Room room in group.OrderBy(r => r.Number, StringComparer.OrdinalIgnoreCase))
+            {
+                LocationPoint? locationPoint = room.Location as LocationPoint;
+                string locationText = locationPoint is null
+                    ? "NO Location Point"
+                    : FormatPoint(locationPoint.Point);
+                string enclosedText = room.Area > 0 ? "ENCLOSED" : "NOT enclosed (Area=0)";
+
+                sb.AppendLine(string.Format(
+                    CultureInfo.InvariantCulture,
+                    "    ElementId={0,-10} Number='{1}'  Name='{2}'  Area={3:F2} m2  {4}  Location={5}",
+                    room.Id.Value,
+                    room.Number,
+                    room.Name,
+                    UnitUtils.ConvertFromInternalUnits(room.Area, UnitTypeId.SquareMeters),
+                    enclosedText,
+                    locationText));
+            }
+        }
     }
 
     /// <summary>

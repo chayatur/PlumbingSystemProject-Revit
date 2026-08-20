@@ -67,29 +67,45 @@ public static class PipeRouteCalculator
     /// חצי-זווית-הפנייה (מעלות) שכל אחד משני מקטעי-העקיפה סוטה מהקו
     /// הישר המקורי (D) - לכיוונים מנוגדים. הזווית **בין שני המקטעים**
     /// היא, מהבנייה עצמה (ראו <see cref="CalculateDetour"/>), תמיד
-    /// <c>2 × 22.5° = 45°</c> - בדיוק, לא בקירוב, ולא תלוית-מרחקים -
-    /// לפי חוק 9.
+    /// <c>2 × 45° = 90°</c> - בדיוק, לא בקירוב, ולא תלוית-מרחקים.
     /// </summary>
-    public const double DetourHalfBendAngleDegrees = 22.5;
+    /// <remarks>
+    /// **תיקון-ציות-לתקן (לא ניסוי-אופטימיזציה)**: rules.md חוק 9 דורש
+    /// במפורש "2 זוויות של 45°" - התייחסות לפרקטיקת-אינסטלציה סטנדרטית
+    /// של פיצול פנייה חדה של 90° לשני מפרקי-45° (ביחד = 90° כוללים),
+    /// לא זווית-פנייה כוללת של 45°. הערך הקודם (22.5°, שנתן 45° כוללים)
+    /// **מעולם לא היה מבוסס על ציטוט מפורש מהחוק** - זו הייתה פרשנות-
+    /// שקטה-שגויה מתקופה קודמת בפרויקט (ראו את התיקון המפורש בהיסטוריית
+    /// שלב 7 - "תיקון קריטי: הגרסה הראשונה נתנה 67.01°..." - שם כבר
+    /// תוקן פגם-בנייה, אבל הפרשנות "45° כוללים" עצמה נשארה בלי אתגר עד
+    /// עכשיו). 45°/leg הוא הערך התקני-הנכון בלי תלות בכמה מקרים ספציפיים
+    /// בפרויקט הוא "פותר" בפועל - נבדק אמפירית (ראו docs/step7.md) ש-
+    /// אף לא אחד מ-5 המקטעים הבעייתיים בקומה 2 נפתר בפועל בזווית הזו
+    /// (עדיין דורשים תכנון הנדסי ידני), אבל זו **אינה** סיבה לחזור
+    /// ל-22.5° - זווית שמעולם לא תאמה את החוק.
+    /// </remarks>
+    public const double DetourHalfBendAngleDegrees = 45.0;
 
     /// <summary>
-    /// גבול תחתון (מעלות) לטווח-הסבילות סביב 45° - **רק** רשת-ביטחון
-    /// נגד שגיאות floating-point (הבנייה עצמה מבטיחה 45° מדויק) - לא
-    /// קריטריון-בחירה. ±5° לפי דרישה מפורשת (לא ±15° כמו בגרסה קודמת).
+    /// גבול תחתון (מעלות) לטווח-הסבילות סביב 90° - **רק** רשת-ביטחון
+    /// נגד שגיאות floating-point (הבנייה עצמה מבטיחה 90° מדויק) - לא
+    /// קריטריון-בחירה. ±5° (עודכן מ-40°-50° סביב 45° הישן, לאותה
+    /// סבילות ±5° סביב 90° החדש).
     /// </summary>
-    public const double MinDetourAngleDegrees = 40.0;
+    public const double MinDetourAngleDegrees = 85.0;
 
-    /// <summary>גבול עליון (מעלות) לטווח-הסבילות סביב 45° - ראו <see cref="MinDetourAngleDegrees"/>.</summary>
-    public const double MaxDetourAngleDegrees = 50.0;
+    /// <summary>גבול עליון (מעלות) לטווח-הסבילות סביב 90° - ראו <see cref="MinDetourAngleDegrees"/>.</summary>
+    public const double MaxDetourAngleDegrees = 95.0;
 
     /// <summary>
     /// זווית-כל-פנייה (מעלות) במסלול "Y מדורג" (<see cref="CalculateStaggeredDetour"/>) -
-    /// האלטרנטיבה שחוק 9 מזכיר ("2 זוויות של 45° **או** Y מדורג") -
-    /// שתי פניות **עדינות יותר** (לא 45° כל אחת - ראו הנימוק ב-
-    /// <see cref="CalculateStaggeredDetour"/>) במקום פנייה בודדת חדה.
-    /// ערך לדוגמה (~22°), ניתן-לכיוונון - לא נתון הנדסי מאושר.
+    /// האלטרנטיבה שחוק 9 מזכיר ("2 זוויות של 45° **או** Y מדורג"). עודכן
+    /// ל-45° במקביל ל-<see cref="DetourHalfBendAngleDegrees"/>, מאותה
+    /// סיבת-ציות-לתקן בדיוק (ראו שם) - **לא** עוד "פנייה עדינה יותר
+    /// משתי-45°-בודדות", אלא שני מפרקי-45° אמיתיים גם כאן, תואמים
+    /// לניסוח החוק במפורש.
     /// </summary>
-    public const double StaggeredDetourBendAngleDegrees = 22.5;
+    public const double StaggeredDetourBendAngleDegrees = 45.0;
 
     /// <summary>
     /// בונה את מזהה-המסלול המשותף לאסלה-קולטן נתונים - מקור יחיד
@@ -176,9 +192,9 @@ public static class PipeRouteCalculator
     /// הניחה, בלי להבטיח, שהיסט קטן ביחס למרחק הכולל "יתקרב" ל-45°
     /// - הנחה שהתבררה כלא-אמינה. **הבנייה הנוכחית לא מניחה כלום**:
     /// שני הכיוונים (<c>U1</c>, <c>U2</c>) נקבעים **מראש**, כל אחד
-    /// סוטה בדיוק <see cref="DetourHalfBendAngleDegrees"/> (22.5°)
+    /// סוטה בדיוק <see cref="DetourHalfBendAngleDegrees"/> (45°)
     /// מ-<c>D</c> (הקו הישר המקורי) לכיוונים מנוגדים - כך שהזווית
-    /// **ביניהם** היא <c>22.5°+22.5°=45°</c> **תמיד**, בכל גיאומטריה,
+    /// **ביניהם** היא <c>45°+45°=90°</c> **תמיד**, בכל גיאומטריה,
     /// ללא תלות במרחקים. ה-waypoint עצמו נמצא **אחרי** קביעת הכיוונים -
     /// כנקודת-ההצטלבות של הקרן מהאסלה (בכיוון <c>U1</c>) עם הקרן
     /// מהקולטן אחורה (בכיוון <c>-U2</c>) - פתרון מדויק של שתי משוואות
@@ -186,11 +202,11 @@ public static class PipeRouteCalculator
     /// </remarks>
     /// <remarks>
     /// **בחירת הצד**: בין שני הכיוונים האפשריים ל-<c>U1</c> (D מסובב
-    /// +22.5° או -22.5°) נבחרת ברירת-המחדל (<paramref name="useOppositeSide"/><c>=false</c>)
+    /// +45° או -45°) נבחרת ברירת-המחדל (<paramref name="useOppositeSide"/><c>=false</c>)
     /// זו שמצביעה **הרחק** ממרכז הקיר החוסם (<paramref name="blockingWall"/>) -
     /// כדי שהמקטע הראשון, היוצא מהאסלה, יפנה מיד לצד הפנוי (היוריסטיקה
     /// הסבירה ביותר). <c>U2</c> הוא תמיד המראה של <c>U1</c> (הסטייה
-    /// הנגדית), כך שהזווית ביניהם מובטחת 45° בלי קשר לבחירת הצד.
+    /// הנגדית), כך שהזווית ביניהם מובטחת 90° בלי קשר לבחירת הצד.
     /// </remarks>
     /// <remarks>
     /// **מגבלה ידועה, לא-נפתרת כאן**: הבנייה קובעת זווית-פנייה תקינה
@@ -222,7 +238,7 @@ public static class PipeRouteCalculator
     /// (הקו הישר אסלה-קולטן), כמתועד למעלה. <c>true</c> - נגזרים
     /// מכיוון **הקיר החוסם עצמו** (מנוטרל-סימן לכיוון D, כדי שלא יהיה
     /// תלוי-שרירותי בסדר Start/End של הקיר) - זווית-החיבור בין שני
-    /// המקטעים עדיין מובטחת 45° (הבנייה לא תלויה בבחירת-הכיוון-הבסיסי
+    /// המקטעים עדיין מובטחת 90° (הבנייה לא תלויה בבחירת-הכיוון-הבסיסי
     /// כדי לתת את התוצאה הזו), אבל **מיקום** ה-waypoint בפועל שונה -
     /// ראו docs/step7.md לגבי הנימוק (ונתוני-אימות אמיתיים).
     /// </param>
@@ -244,7 +260,7 @@ public static class PipeRouteCalculator
     /// במפורש (לא רק על המרחק האווירי, שכבר נבדק קודם ב-<see cref="CollectorLocator"/>,
     /// אלא על האורך **בפועל** של המסלול-העוקף שגדול ממנו); או אם
     /// הזווית בין שני המקטעים (בדיקת-בטיחות בלבד - ראו
-    /// <see cref="MinDetourAngleDegrees"/>) חורגת מ-45°±5° - לא אמור
+    /// <see cref="MinDetourAngleDegrees"/>) חורגת מ-90°±5° - לא אמור
     /// לקרות מהבנייה עצמה, אבל עדיף להיכשל בבירור מאשר לסמוך על הנחה.
     /// </exception>
     public static IReadOnlyList<PipeSegment> CalculateDetour(
@@ -270,8 +286,8 @@ public static class PipeRouteCalculator
             useWallDirectionAsReference, useOppositeSide, totalHorizontalDistance);
 
         // פתרון מדויק (לא קירוב): t1·U1 + t2·U2 = (קולטן - אסלה).
-        // הדטרמיננטה היא sin(±45°) - אף פעם לא אפס, כי הזווית בין
-        // U1 ל-U2 קבועה (45°) ולעולם לא 0°/180°.
+        // הדטרמיננטה היא sin(±90°) - אף פעם לא אפס, כי הזווית בין
+        // U1 ל-U2 קבועה (90°) ולעולם לא 0°/180°.
         double rx = collector.Location.X - fixture.Location.X;
         double ry = collector.Location.Y - fixture.Location.Y;
         double determinant = (u1X * u2Y) - (u1Y * u2X);
@@ -282,7 +298,7 @@ public static class PipeRouteCalculator
         if (t1 <= 0 || t2 <= 0)
         {
             throw new InvalidOperationException(
-                $"לא ניתן לבנות מסלול-עוקף תקין (זווית 45°) בין אסלה '{fixture.Id}' " +
+                $"לא ניתן לבנות מסלול-עוקף תקין (זווית 90°) בין אסלה '{fixture.Id}' " +
                 $"לקולטן '{collector.Id}' לגיאומטריה הנתונה - נקודת-ההצטלבות של שני " +
                 $"המקטעים בזווית המבוקשת יוצאת 'אחורה' (t1={t1:F4}, t2={t2:F4}), לא קדימה.");
         }
@@ -309,7 +325,7 @@ public static class PipeRouteCalculator
         var collectorEndPoint = new Point3D(collector.Location.X, collector.Location.Y, collectorEndZ);
 
         // בדיקת-בטיחות (לא קריטריון-בחירה - ראו MinDetourAngleDegrees):
-        // הזווית בין U1 ל-U2 אמורה להיות 45° מדויק מהבנייה עצמה.
+        // הזווית בין U1 ל-U2 אמורה להיות 90° מדויק מהבנייה עצמה.
         double cosAngle = (u1X * u2X) + (u1Y * u2Y);
         double angleDegrees = Math.Acos(Math.Clamp(cosAngle, -1.0, 1.0)) * (180.0 / Math.PI);
 
@@ -317,7 +333,7 @@ public static class PipeRouteCalculator
         {
             throw new InvalidOperationException(
                 $"זווית-החיבור המחושבת ({angleDegrees:F2}°) במסלול-העוקף בין אסלה " +
-                $"'{fixture.Id}' לקולטן '{collector.Id}' חורגת מ-45°±5° - לא אמור לקרות " +
+                $"'{fixture.Id}' לקולטן '{collector.Id}' חורגת מ-90°±5° - לא אמור לקרות " +
                 "מהבנייה הגיאומטרית עצמה; ייתכן קלט חריג.");
         }
 
@@ -499,7 +515,7 @@ public static class PipeRouteCalculator
     /// <param name="fixtureLocation">מיקום האסלה.</param>
     /// <param name="collectorLocation">מיקום הקולטן.</param>
     /// <param name="blockingWall">הקיר החוסם (למרכז - בחירת-צד; לכיוון - אם <paramref name="useWallDirectionAsReference"/>).</param>
-    /// <param name="bendAngleDegrees">חצי-זווית-הפנייה (מעלות) - 22.5 עבור שתי הקריאות הקיימות.</param>
+    /// <param name="bendAngleDegrees">חצי-זווית-הפנייה (מעלות) - 45 עבור שתי הקריאות הקיימות.</param>
     /// <param name="useWallDirectionAsReference">
     /// <c>false</c> - כיוון-הייחוס הוא <c>D</c> (הקו הישר אסלה-קולטן).
     /// <c>true</c> - כיוון-הייחוס הוא כיוון **הקיר החוסם עצמו**

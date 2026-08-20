@@ -114,15 +114,25 @@ public class DrawPipesCommand : IExternalCommand
         Document doc = commandData.Application.ActiveUIDocument.Document;
         View activeView = commandData.Application.ActiveUIDocument.ActiveView;
 
+        Level? activeLevel = activeView.GenLevel;
+        int? activeFloorNumber = RevitModelReader.TryGetFloorNumber(activeLevel);
+
+        if (!TryChooseScope(activeLevel, activeFloorNumber, out ElementId? onlyLevelId, out string scopeDescription))
+        {
+            return Result.Cancelled;
+        }
+
         var reader = new RevitModelReader(doc);
         var placementService = new CollectorPlacementService(doc);
         var wallRayCasting = new WallRayCasting(doc);
 
         List<Apartment> apartments;
+        List<string> readerWarnings;
         Dictionary<string, List<CollectorPoint>> rawCollectorsByApartmentId;
         try
         {
-            apartments = reader.ReadApartments();
+            apartments = reader.ReadApartments(onlyLevelId, excludeFloorZero: true);
+            readerWarnings = reader.Warnings.ToList();
             rawCollectorsByApartmentId = apartments.ToDictionary(a => a.Id, CollectorLocator.Locate);
         }
         catch (Exception ex) when (ex is InvalidOperationException or ArgumentException)
@@ -248,7 +258,7 @@ public class DrawPipesCommand : IExternalCommand
             return Result.Failed;
         }
 
-        string report = BuildReport(doc, apartments, drawnByApartmentId, deletedPipeCount);
+        string report = BuildReport(doc, apartments, drawnByApartmentId, deletedPipeCount, scopeDescription, readerWarnings);
 
         string path = Path.Combine(
             Path.GetTempPath(),
@@ -285,6 +295,82 @@ public class DrawPipesCommand : IExternalCommand
         }
 
         return Result.Succeeded;
+    }
+
+    /// <summary>
+    /// מציגה דיאלוג-בחירת-היקף לפני כל הרצה: "קומה פעילה בלבד" (ברירת
+    /// המחדל, לפי <paramref name="activeLevel"/> - <c>activeView.GenLevel</c>
+    /// שנקרא ב-<see cref="Execute"/>) מול "כל הבניין" - בקשת המשתמשת
+    /// (docs/step7.md) שהתנהגות-ברירת-המחדל הישנה ("תמיד כל המסמך, בלי
+    /// קשר לתצוגה הפעילה") הייתה מפתיעה. אם <paramref name="activeLevel"/>
+    /// הוא null (תצוגה בלי Level משויך - למשל 3D) אין טעם להציע "קומה
+    /// פעילה בלבד" בכלל, אז מוצגת רק אפשרות "כל הבניין" (+ Cancel).
+    /// קומה 0 (מסחרית) לא מטופלת כאן במיוחד - היא תמיד מוחרגת בתוך
+    /// <see cref="RevitModelReader.ReadApartments"/> (<c>excludeFloorZero: true</c>),
+    /// גם אם המשתמשת בוחרת "קומה פעילה בלבד" בזמן שה-View הפעיל הוא
+    /// דווקא קומה 0 - התוצאה תהיה 0 דירות, עם <c>scopeDescription</c>
+    /// שמבהיר את זה במפורש בכותרת הדוח, לא נכשלת בשקט.
+    /// </summary>
+    /// <returns>false אם המשתמשת ביטלה (Cancel) - Execute מחזירה Result.Cancelled.</returns>
+    private static bool TryChooseScope(
+        Level? activeLevel,
+        int? activeFloorNumber,
+        out ElementId? onlyLevelId,
+        out string scopeDescription)
+    {
+        string floorText = activeFloorNumber is int fn
+            ? $"Floor {fn}"
+            : "קומה שמספרה לא זוהה משם ה-Level";
+
+        var td = new TaskDialog("PlumbingSystem - היקף הרצה")
+        {
+            MainInstruction = "לעבד רק את הקומה הפעילה, או את כל הבניין?",
+            MainContent = activeLevel is null
+                ? "לתצוגה הפעילה אין Level מזוהה (למשל תצוגת-3D) - אפשר להריץ רק על כל הבניין. " +
+                  "כדי לעבד קומה בודדת, פתחי תוכנית-קומה (Floor Plan) של הקומה הרצויה ונסי שוב."
+                : $"התצוגה הפעילה שייכת ל-Level '{activeLevel.Name}' ({floorText}).",
+            CommonButtons = TaskDialogCommonButtons.Cancel,
+            DefaultButton = TaskDialogResult.Cancel,
+        };
+
+        if (activeLevel is not null)
+        {
+            td.AddCommandLink(
+                TaskDialogCommandLinkId.CommandLink1,
+                $"קומה פעילה בלבד ({activeLevel.Name})",
+                "מעבד רק אסלות/דירות שנמצאות ב-Level הזה בדיוק. ברירת המחדל.");
+        }
+
+        td.AddCommandLink(
+            activeLevel is null ? TaskDialogCommandLinkId.CommandLink1 : TaskDialogCommandLinkId.CommandLink2,
+            "כל הבניין",
+            "מעבד את כל הקומות במסמך (מלבד קומה מסחרית 0, שמוחרגת תמיד משני המצבים).");
+
+        TaskDialogResult result = td.Show();
+
+        if (activeLevel is not null && result == TaskDialogResult.CommandLink1)
+        {
+            onlyLevelId = activeLevel.Id;
+            scopeDescription = activeFloorNumber is int floorNumber
+                ? $"Floor {floorNumber} only (Level '{activeLevel.Name}')"
+                : $"Level '{activeLevel.Name}' only (floor number could not be parsed from its name)";
+            return true;
+        }
+
+        bool wholeBuildingChosen =
+            (activeLevel is not null && result == TaskDialogResult.CommandLink2) ||
+            (activeLevel is null && result == TaskDialogResult.CommandLink1);
+
+        if (wholeBuildingChosen)
+        {
+            onlyLevelId = null;
+            scopeDescription = "entire building (all levels except Floor 0 - commercial, always excluded)";
+            return true;
+        }
+
+        onlyLevelId = null;
+        scopeDescription = string.Empty;
+        return false;
     }
 
     /// <summary>
@@ -1414,7 +1500,9 @@ public class DrawPipesCommand : IExternalCommand
         Document doc,
         List<Apartment> apartments,
         Dictionary<string, List<DrawnPipe>> drawnByApartmentId,
-        int deletedPipeCount)
+        int deletedPipeCount,
+        string scopeDescription,
+        List<string> readerWarnings)
     {
         List<DrawnPipe> allPipes = drawnByApartmentId.Values.SelectMany(list => list).ToList();
         int detourCount = allPipes.Count(p => p.IsDetour);
@@ -1424,12 +1512,23 @@ public class DrawPipesCommand : IExternalCommand
         var sb = new StringBuilder();
         sb.AppendLine("=== PlumbingSystem - Pipes Drawn in Revit ===");
         sb.AppendLine($"Generated: {DateTime.Now:yyyy-MM-dd HH:mm:ss}");
+        sb.AppendLine($"Scope: {scopeDescription}");
         sb.AppendLine($"Deleted {deletedPipeCount} existing pipe route(s) from previous runs before creating new ones.");
         sb.AppendLine(string.Format(
             CultureInfo.InvariantCulture,
             "Total pipe routes created: {0} (detour routes: {1}, manual engineering required: {2}, obstructed: {3}).",
             allPipes.Count, detourCount, manualRequiredCount, obstructedCount));
         sb.AppendLine($"Apartments processed: {apartments.Count}");
+
+        if (readerWarnings.Count > 0)
+        {
+            sb.AppendLine();
+            sb.AppendLine($"--- Warnings ({readerWarnings.Count}) - elements skipped/excluded while reading the model ---");
+            foreach (string warning in readerWarnings)
+            {
+                sb.AppendLine($"  {warning}");
+            }
+        }
 
         foreach (Apartment apartment in apartments.OrderBy(a => a.Id, StringComparer.OrdinalIgnoreCase))
         {
@@ -1448,8 +1547,8 @@ public class DrawPipesCommand : IExternalCommand
 
                 string routeKind = pipe.Segments.Count switch
                 {
-                    3 => "STAGGERED Y (3 legs, 2x~22.5 deg bends, law 9 alt.)",
-                    2 => "DETOUR (2 legs, ~45 deg bend, law 9)",
+                    3 => $"STAGGERED Y (3 legs, 2x~{PipeRouteCalculator.StaggeredDetourBendAngleDegrees:F1} deg bends, law 9 alt.)",
+                    2 => $"DETOUR (2 legs, ~{PipeRouteCalculator.DetourHalfBendAngleDegrees * 2:F1} deg bend, law 9)",
                     _ => "STRAIGHT (1 leg)",
                 };
                 string obstructionStatus = pipe.BlockingWallId is ElementId wallId
@@ -1500,11 +1599,12 @@ public class DrawPipesCommand : IExternalCommand
 
                     sb.AppendLine(string.Format(
                         CultureInfo.InvariantCulture,
-                        "    Bend angle between legs={0:F2} deg  validation={1} (range {2:F0}-{3:F0} deg, ~45 deg per law 9)",
+                        "    Bend angle between legs={0:F2} deg  validation={1} (range {2:F0}-{3:F0} deg, ~{4:F0} deg per law 9)",
                         angleDegrees,
                         angleValid ? "PASS" : "FAIL",
                         PipeRouteCalculator.MinDetourAngleDegrees,
-                        PipeRouteCalculator.MaxDetourAngleDegrees));
+                        PipeRouteCalculator.MaxDetourAngleDegrees,
+                        PipeRouteCalculator.DetourHalfBendAngleDegrees * 2));
                 }
                 else if (pipe.Segments.Count == 3)
                 {
