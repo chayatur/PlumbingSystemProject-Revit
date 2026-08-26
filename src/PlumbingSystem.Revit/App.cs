@@ -26,8 +26,10 @@ public class App : IExternalApplication
     /// "בנה קולטנים" שמריץ את <see cref="BuildCollectorsCommand"/>
     /// (דוח בלבד, ReadOnly), כפתור "מקם קולטנים ב-Revit" שמריץ את
     /// <see cref="PlaceCollectorsCommand"/> (כותב אלמנטים בפועל למודל),
-    /// וכפתור "צייר צינורות" שמריץ את <see cref="DrawPipesCommand"/>
-    /// (שלב 7 - מקטעי צינור בין אסלה לקולטן).
+    /// כפתור "צייר צינורות" שמריץ את <see cref="DrawPipesCommand"/>
+    /// (שלב 7 - מקטעי צינור בין אסלה לקולטן), וכפתור "אבחון היסט-קולטן"
+    /// שמריץ את <see cref="CollectorSetbackDiagnosticCommand"/> (אבחון
+    /// **זמני** נוסף, ReadOnly - ראו התיעוד עליה - להסרה כשהחקירה תסתיים).
     /// </summary>
     /// <param name="application">אובייקט הבקרה של Revit UI שדרכו נרשמים רכיבי הריבון.</param>
     /// <returns><see cref="Result.Succeeded"/> אם רישום הריבון הצליח.</returns>
@@ -76,12 +78,22 @@ public class App : IExternalApplication
             assemblyPath,
             typeof(DrawPipesCommand).FullName);
 
+        // כפתור אבחון **זמני**, כמו DiscoverModelCommand - ראו התיעוד על
+        // CollectorSetbackDiagnosticCommand. יש להסיר יחד עם המחלקה עצמה
+        // כשהחקירה תסתיים (בין אם מובילה לשינוי-קוד בפועל ובין אם לא).
+        var collectorSetbackDiagnosticButtonData = new PushButtonData(
+            "CollectorSetbackDiagnosticCommand",
+            "אבחון היסט-קולטן",
+            assemblyPath,
+            typeof(CollectorSetbackDiagnosticCommand).FullName);
+
         panel.AddItem(readElementsButtonData);
         panel.AddItem(discoverModelButtonData);
         panel.AddItem(buildDomainModelButtonData);
         panel.AddItem(buildCollectorsButtonData);
         panel.AddItem(placeCollectorsButtonData);
         panel.AddItem(drawPipesButtonData);
+        panel.AddItem(collectorSetbackDiagnosticButtonData);
 
         return Result.Succeeded;
     }
