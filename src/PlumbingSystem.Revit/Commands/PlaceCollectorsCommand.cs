@@ -31,7 +31,10 @@ namespace PlumbingSystem.Revit.Commands;
 public class PlaceCollectorsCommand : IExternalCommand
 {
     /// <summary>
-    /// מריצה <see cref="RevitModelReader.ReadApartments"/> ו-
+    /// מציגה קודם דיאלוג-בחירת-היקף (<see cref="ScopeSelector.TryChooseScope"/> -
+    /// קומה פעילה מול כל הבניין, אותו דיאלוג בדיוק כמו ב-
+    /// <see cref="DrawPipesCommand"/>) - מחזירה <see cref="Result.Cancelled"/>
+    /// אם בוטל. אחר-כך מריצה <see cref="RevitModelReader.ReadApartments"/> ו-
     /// <see cref="CollectorLocator.Locate"/> (כמו <see cref="BuildCollectorsCommand"/>),
     /// ואז - בתוך <see cref="Autodesk.Revit.DB.Transaction"/> אחד שעוטף
     /// הכל - **קודם** מוחקת קולטנים ישנים מהרצות קודמות
@@ -42,6 +45,11 @@ public class PlaceCollectorsCommand : IExternalCommand
     /// לא באמצע-מחיקה (בלי קולטנים בכלל) ולא עם אלמנטים חלקיים מדירות
     /// שהספיקו להיווצר לפני הכשל.
     /// </summary>
+    /// <remarks>
+    /// בניגוד ל-<see cref="DrawPipesCommand"/>, הפקודה הזו **לא** מחריגה
+    /// קומה 0 (<c>excludeFloorZero</c> נשאר <c>false</c>) - לא התבקש שינוי
+    /// כזה כאן, וההתנהגות ביחס לקומה 0 נשארת זהה-להיום (ראו docs/step7.md).
+    /// </remarks>
     /// <param name="commandData">נתוני ההקשר של הפקודה, כולל המסמך הפעיל.</param>
     /// <param name="message">מתמלא בהודעת השגיאה אם הפעולה נכשלה.</param>
     /// <param name="elements">לא בשימוש.</param>
@@ -51,14 +59,24 @@ public class PlaceCollectorsCommand : IExternalCommand
         Document doc = commandData.Application.ActiveUIDocument.Document;
         View activeView = commandData.Application.ActiveUIDocument.ActiveView;
 
+        Level? activeLevel = activeView.GenLevel;
+        int? activeFloorNumber = RevitModelReader.TryGetFloorNumber(activeLevel);
+
+        if (!ScopeSelector.TryChooseScope(activeLevel, activeFloorNumber, out ElementId? onlyLevelId, out string scopeDescription))
+        {
+            return Result.Cancelled;
+        }
+
         var reader = new RevitModelReader(doc);
         var placementService = new CollectorPlacementService(doc);
 
         List<Apartment> apartments;
+        List<string> readerWarnings;
         Dictionary<string, List<CollectorPoint>> rawCollectorsByApartmentId;
         try
         {
-            apartments = reader.ReadApartments();
+            apartments = reader.ReadApartments(onlyLevelId);
+            readerWarnings = reader.Warnings.ToList();
             rawCollectorsByApartmentId = apartments.ToDictionary(a => a.Id, CollectorLocator.Locate);
         }
         catch (Exception ex) when (ex is InvalidOperationException or ArgumentException)
@@ -144,7 +162,7 @@ public class PlaceCollectorsCommand : IExternalCommand
             return Result.Failed;
         }
 
-        string report = BuildReport(apartments, placedByApartmentId, deletedCollectorCount, deletedCollectorMaterial);
+        string report = BuildReport(apartments, placedByApartmentId, deletedCollectorCount, deletedCollectorMaterial, scopeDescription, readerWarnings);
 
         string path = Path.Combine(
             Path.GetTempPath(),
@@ -196,7 +214,9 @@ public class PlaceCollectorsCommand : IExternalCommand
         List<Apartment> apartments,
         Dictionary<string, List<PlacedCollector>> placedByApartmentId,
         int deletedCollectorCount,
-        bool deletedCollectorMaterial)
+        bool deletedCollectorMaterial,
+        string scopeDescription,
+        List<string> readerWarnings)
     {
         List<PlacedCollector> allCollectors = placedByApartmentId.Values.SelectMany(list => list).ToList();
         int passCount = allCollectors.Count(p => p.Verification.OverallPass);
@@ -205,11 +225,22 @@ public class PlaceCollectorsCommand : IExternalCommand
         var sb = new StringBuilder();
         sb.AppendLine("=== PlumbingSystem - Collectors Placed in Revit ===");
         sb.AppendLine($"Generated: {DateTime.Now:yyyy-MM-dd HH:mm:ss}");
+        sb.AppendLine($"Scope: {scopeDescription}");
         sb.AppendLine($"VERIFICATION SUMMARY: {passCount}/{totalCount} collectors PASS" +
             (passCount == totalCount ? " (all good)." : " - see FAIL entries below for detail."));
         sb.AppendLine($"Deleted {deletedCollectorCount} existing collector(s) from previous runs before creating new ones.");
         sb.AppendLine($"Deleted previous collector Material (if any) before creating a fresh one: {deletedCollectorMaterial}");
         sb.AppendLine($"Apartments processed: {apartments.Count}");
+
+        if (readerWarnings.Count > 0)
+        {
+            sb.AppendLine();
+            sb.AppendLine($"--- Warnings ({readerWarnings.Count}) - elements skipped/excluded while reading the model ---");
+            foreach (string warning in readerWarnings)
+            {
+                sb.AppendLine($"  {warning}");
+            }
+        }
 
         foreach (Apartment apartment in apartments.OrderBy(a => a.Id, StringComparer.OrdinalIgnoreCase))
         {

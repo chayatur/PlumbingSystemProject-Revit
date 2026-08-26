@@ -117,9 +117,19 @@ public class DrawPipesCommand : IExternalCommand
         Level? activeLevel = activeView.GenLevel;
         int? activeFloorNumber = RevitModelReader.TryGetFloorNumber(activeLevel);
 
-        if (!TryChooseScope(activeLevel, activeFloorNumber, out ElementId? onlyLevelId, out string scopeDescription))
+        if (!ScopeSelector.TryChooseScope(activeLevel, activeFloorNumber, out ElementId? onlyLevelId, out string scopeDescription))
         {
             return Result.Cancelled;
+        }
+
+        // הפקודה הזו (בניגוד ל-PlaceCollectorsCommand/BuildCollectorsCommand)
+        // תמיד מחריגה קומה 0 (excludeFloorZero: true, ראו הקריאה ל-
+        // ReadApartments למטה) - גם במצב "כל הבניין", אז מוסיפים את
+        // ההערה הזו לתיאור-ההיקף כאן, לא בתוך ScopeSelector המשותף
+        // (שלא יודע איזה קורא מחריג קומה 0 ואיזה לא).
+        if (onlyLevelId is null)
+        {
+            scopeDescription += " except Floor 0 - commercial, always excluded";
         }
 
         var reader = new RevitModelReader(doc);
@@ -295,82 +305,6 @@ public class DrawPipesCommand : IExternalCommand
         }
 
         return Result.Succeeded;
-    }
-
-    /// <summary>
-    /// מציגה דיאלוג-בחירת-היקף לפני כל הרצה: "קומה פעילה בלבד" (ברירת
-    /// המחדל, לפי <paramref name="activeLevel"/> - <c>activeView.GenLevel</c>
-    /// שנקרא ב-<see cref="Execute"/>) מול "כל הבניין" - בקשת המשתמשת
-    /// (docs/step7.md) שהתנהגות-ברירת-המחדל הישנה ("תמיד כל המסמך, בלי
-    /// קשר לתצוגה הפעילה") הייתה מפתיעה. אם <paramref name="activeLevel"/>
-    /// הוא null (תצוגה בלי Level משויך - למשל 3D) אין טעם להציע "קומה
-    /// פעילה בלבד" בכלל, אז מוצגת רק אפשרות "כל הבניין" (+ Cancel).
-    /// קומה 0 (מסחרית) לא מטופלת כאן במיוחד - היא תמיד מוחרגת בתוך
-    /// <see cref="RevitModelReader.ReadApartments"/> (<c>excludeFloorZero: true</c>),
-    /// גם אם המשתמשת בוחרת "קומה פעילה בלבד" בזמן שה-View הפעיל הוא
-    /// דווקא קומה 0 - התוצאה תהיה 0 דירות, עם <c>scopeDescription</c>
-    /// שמבהיר את זה במפורש בכותרת הדוח, לא נכשלת בשקט.
-    /// </summary>
-    /// <returns>false אם המשתמשת ביטלה (Cancel) - Execute מחזירה Result.Cancelled.</returns>
-    private static bool TryChooseScope(
-        Level? activeLevel,
-        int? activeFloorNumber,
-        out ElementId? onlyLevelId,
-        out string scopeDescription)
-    {
-        string floorText = activeFloorNumber is int fn
-            ? $"Floor {fn}"
-            : "קומה שמספרה לא זוהה משם ה-Level";
-
-        var td = new TaskDialog("PlumbingSystem - היקף הרצה")
-        {
-            MainInstruction = "לעבד רק את הקומה הפעילה, או את כל הבניין?",
-            MainContent = activeLevel is null
-                ? "לתצוגה הפעילה אין Level מזוהה (למשל תצוגת-3D) - אפשר להריץ רק על כל הבניין. " +
-                  "כדי לעבד קומה בודדת, פתחי תוכנית-קומה (Floor Plan) של הקומה הרצויה ונסי שוב."
-                : $"התצוגה הפעילה שייכת ל-Level '{activeLevel.Name}' ({floorText}).",
-            CommonButtons = TaskDialogCommonButtons.Cancel,
-            DefaultButton = TaskDialogResult.Cancel,
-        };
-
-        if (activeLevel is not null)
-        {
-            td.AddCommandLink(
-                TaskDialogCommandLinkId.CommandLink1,
-                $"קומה פעילה בלבד ({activeLevel.Name})",
-                "מעבד רק אסלות/דירות שנמצאות ב-Level הזה בדיוק. ברירת המחדל.");
-        }
-
-        td.AddCommandLink(
-            activeLevel is null ? TaskDialogCommandLinkId.CommandLink1 : TaskDialogCommandLinkId.CommandLink2,
-            "כל הבניין",
-            "מעבד את כל הקומות במסמך (מלבד קומה מסחרית 0, שמוחרגת תמיד משני המצבים).");
-
-        TaskDialogResult result = td.Show();
-
-        if (activeLevel is not null && result == TaskDialogResult.CommandLink1)
-        {
-            onlyLevelId = activeLevel.Id;
-            scopeDescription = activeFloorNumber is int floorNumber
-                ? $"Floor {floorNumber} only (Level '{activeLevel.Name}')"
-                : $"Level '{activeLevel.Name}' only (floor number could not be parsed from its name)";
-            return true;
-        }
-
-        bool wholeBuildingChosen =
-            (activeLevel is not null && result == TaskDialogResult.CommandLink2) ||
-            (activeLevel is null && result == TaskDialogResult.CommandLink1);
-
-        if (wholeBuildingChosen)
-        {
-            onlyLevelId = null;
-            scopeDescription = "entire building (all levels except Floor 0 - commercial, always excluded)";
-            return true;
-        }
-
-        onlyLevelId = null;
-        scopeDescription = string.Empty;
-        return false;
     }
 
     /// <summary>

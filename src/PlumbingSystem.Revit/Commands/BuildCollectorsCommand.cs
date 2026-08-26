@@ -23,7 +23,10 @@ namespace PlumbingSystem.Revit.Commands;
 public class BuildCollectorsCommand : IExternalCommand
 {
     /// <summary>
-    /// מריצה <see cref="RevitModelReader.ReadApartments"/> ואז
+    /// מציגה קודם דיאלוג-בחירת-היקף (<see cref="ScopeSelector.TryChooseScope"/> -
+    /// קומה פעילה מול כל הבניין, אותו דיאלוג בדיוק כמו ב-<see cref="DrawPipesCommand"/>
+    /// ו-<see cref="PlaceCollectorsCommand"/>) - מחזירה <see cref="Result.Cancelled"/>
+    /// אם בוטל. אחר-כך מריצה <see cref="RevitModelReader.ReadApartments"/> ואז
     /// <see cref="CollectorLocator.Locate"/> לכל דירה, ומדפיסה את
     /// התוצאה לקובץ טקסט. אם אחת מהשתיים נכשלת עם
     /// <see cref="System.InvalidOperationException"/> או <see cref="System.ArgumentException"/>
@@ -32,6 +35,11 @@ public class BuildCollectorsCommand : IExternalCommand
     /// המדויקת ב-TaskDialog ומחזירה <see cref="Result.Failed"/>, במקום
     /// לתת ל-Revit להציג חריגה גולמית או להמשיך עם דוח חלקי.
     /// </summary>
+    /// <remarks>
+    /// בניגוד ל-<see cref="DrawPipesCommand"/>, הפקודה הזו **לא** מחריגה
+    /// קומה 0 (<c>excludeFloorZero</c> נשאר <c>false</c>) - לא התבקש שינוי
+    /// כזה כאן, וההתנהגות ביחס לקומה 0 נשארת זהה-להיום (ראו docs/step7.md).
+    /// </remarks>
     /// <param name="commandData">נתוני ההקשר של הפקודה, כולל המסמך הפעיל.</param>
     /// <param name="message">מתמלא בהודעת השגיאה אם הבנייה נכשלה.</param>
     /// <param name="elements">לא בשימוש.</param>
@@ -39,13 +47,25 @@ public class BuildCollectorsCommand : IExternalCommand
     public Result Execute(ExternalCommandData commandData, ref string message, ElementSet elements)
     {
         Document doc = commandData.Application.ActiveUIDocument.Document;
+        View activeView = commandData.Application.ActiveUIDocument.ActiveView;
+
+        Level? activeLevel = activeView.GenLevel;
+        int? activeFloorNumber = RevitModelReader.TryGetFloorNumber(activeLevel);
+
+        if (!ScopeSelector.TryChooseScope(activeLevel, activeFloorNumber, out ElementId? onlyLevelId, out string scopeDescription))
+        {
+            return Result.Cancelled;
+        }
+
         var reader = new RevitModelReader(doc);
 
         List<Apartment> apartments;
+        List<string> readerWarnings;
         Dictionary<string, List<CollectorPoint>> collectorsByApartmentId;
         try
         {
-            apartments = reader.ReadApartments();
+            apartments = reader.ReadApartments(onlyLevelId);
+            readerWarnings = reader.Warnings.ToList();
             collectorsByApartmentId = apartments.ToDictionary(a => a.Id, CollectorLocator.Locate);
         }
         catch (Exception ex) when (ex is InvalidOperationException or ArgumentException)
@@ -55,7 +75,7 @@ public class BuildCollectorsCommand : IExternalCommand
             return Result.Failed;
         }
 
-        string report = BuildReport(apartments, collectorsByApartmentId);
+        string report = BuildReport(apartments, collectorsByApartmentId, scopeDescription, readerWarnings);
 
         string path = Path.Combine(
             Path.GetTempPath(),
@@ -69,15 +89,28 @@ public class BuildCollectorsCommand : IExternalCommand
 
     private static string BuildReport(
         List<Apartment> apartments,
-        Dictionary<string, List<CollectorPoint>> collectorsByApartmentId)
+        Dictionary<string, List<CollectorPoint>> collectorsByApartmentId,
+        string scopeDescription,
+        List<string> readerWarnings)
     {
         var sb = new StringBuilder();
         sb.AppendLine("=== PlumbingSystem - Collector Location Report ===");
         sb.AppendLine($"Generated: {DateTime.Now:yyyy-MM-dd HH:mm:ss}");
+        sb.AppendLine($"Scope: {scopeDescription}");
         sb.AppendLine($"Apartments found: {apartments.Count}");
         sb.AppendLine(
             $"MaxDistanceMeters={CollectorLocator.MaxDistanceMeters:F1}  " +
             $"PreferredDistanceMeters={CollectorLocator.PreferredDistanceMeters:F1}");
+
+        if (readerWarnings.Count > 0)
+        {
+            sb.AppendLine();
+            sb.AppendLine($"--- Warnings ({readerWarnings.Count}) - elements skipped/excluded while reading the model ---");
+            foreach (string warning in readerWarnings)
+            {
+                sb.AppendLine($"  {warning}");
+            }
+        }
 
         foreach (Apartment apartment in apartments.OrderBy(a => a.Id, StringComparer.OrdinalIgnoreCase))
         {

@@ -27,9 +27,12 @@ public class App : IExternalApplication
     /// (דוח בלבד, ReadOnly), כפתור "מקם קולטנים ב-Revit" שמריץ את
     /// <see cref="PlaceCollectorsCommand"/> (כותב אלמנטים בפועל למודל),
     /// כפתור "צייר צינורות" שמריץ את <see cref="DrawPipesCommand"/>
-    /// (שלב 7 - מקטעי צינור בין אסלה לקולטן), וכפתור "אבחון היסט-קולטן"
+    /// (שלב 7 - מקטעי צינור בין אסלה לקולטן), כפתור "אבחון היסט-קולטן"
     /// שמריץ את <see cref="CollectorSetbackDiagnosticCommand"/> (אבחון
-    /// **זמני** נוסף, ReadOnly - ראו התיעוד עליה - להסרה כשהחקירה תסתיים).
+    /// **זמני** נוסף, ReadOnly - ראו התיעוד עליה - להסרה כשהחקירה תסתיים),
+    /// וכפתור "דוח לקוח (HTML)" שמריץ את <see cref="GenerateClientReportCommand"/>
+    /// (קורא את דוח-ה-Pipes האחרון ובונה ממנו HTML מקצועי ללקוח/הנהלה -
+    /// שכבת-תצוגה בלבד, בלי לגעת בלוגיקה ההנדסית).
     /// </summary>
     /// <param name="application">אובייקט הבקרה של Revit UI שדרכו נרשמים רכיבי הריבון.</param>
     /// <returns><see cref="Result.Succeeded"/> אם רישום הריבון הצליח.</returns>
@@ -87,6 +90,17 @@ public class App : IExternalApplication
             assemblyPath,
             typeof(CollectorSetbackDiagnosticCommand).FullName);
 
+        // כפתור נפרד (לא פרמטר על "צייר צינורות") - קהל-יעד שונה
+        // (לקוח/הנהלה, לא מהנדס) ופלט שונה (HTML, לא TXT) - ראו התיעוד
+        // על GenerateClientReportCommand. קורא-בלבד את קובץ ה-Pipes
+        // האחרון שכבר נוצר - אין צורך להריץ "צייר צינורות" מחדש כדי
+        // להריץ את זה שוב.
+        var generateClientReportButtonData = new PushButtonData(
+            "GenerateClientReportCommand",
+            "דוח לקוח (HTML)",
+            assemblyPath,
+            typeof(GenerateClientReportCommand).FullName);
+
         panel.AddItem(readElementsButtonData);
         panel.AddItem(discoverModelButtonData);
         panel.AddItem(buildDomainModelButtonData);
@@ -94,6 +108,7 @@ public class App : IExternalApplication
         panel.AddItem(placeCollectorsButtonData);
         panel.AddItem(drawPipesButtonData);
         panel.AddItem(collectorSetbackDiagnosticButtonData);
+        panel.AddItem(generateClientReportButtonData);
 
         return Result.Succeeded;
     }
