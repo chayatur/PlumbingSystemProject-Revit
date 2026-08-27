@@ -9,6 +9,10 @@
     <GenerateDocumentationFile>true</GenerateDocumentationFile>
     <!-- Revit טוען את ה-Add-in כ-DLL רגיל, לא כאפליקציה - אין צורך ב-exe. -->
     <OutputType>Library</OutputType>
+    <!-- נדרש עבור חלון-ההתקדמות (PlumbingSystem.Revit.Progress) - ראו
+         docs/progress-infrastructure.md. Revit עצמו מבוסס-WPF, אז
+         ה-assemblies האלה כבר טעונים בתהליך שלו ממילא. -->
+    <UseWPF>true</UseWPF>
   </PropertyGroup>
 
   <ItemGroup>

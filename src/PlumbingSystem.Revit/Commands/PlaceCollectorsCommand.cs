@@ -8,6 +8,7 @@ using Autodesk.Revit.UI;
 using PlumbingSystem.Core.Domain;
 using PlumbingSystem.Core.Geometry;
 using PlumbingSystem.Core.Models;
+using PlumbingSystem.Revit.Progress;
 
 namespace PlumbingSystem.Revit.Commands;
 
@@ -86,6 +87,26 @@ public class PlaceCollectorsCommand : IExternalCommand
             return Result.Failed;
         }
 
+        // דיווח-התקדמות-חי (ראו docs/progress-infrastructure.md) - אותה
+        // תשתית בדיוק כמו ב-DrawPipesCommand, בלי שום שינוי בה. כאן
+        // "SuccessCount"/"ManualReviewCount" מייצגים משהו אחר לגמרי
+        // (PASS/FAIL של האימות האוטומטי, לא "דורש-תכנון-ידני") - זה
+        // בדיוק מה שהתשתית הכללית נועדה לאפשר.
+        int totalCollectorCount = rawCollectorsByApartmentId.Values.Sum(list => list.Count);
+        IProgressReporter progressReporter;
+        try
+        {
+            progressReporter = new ProgressWindowReporter("Place Collectors", totalCollectorCount);
+        }
+        catch
+        {
+            progressReporter = NullProgressReporter.Instance;
+        }
+
+        int processedCollectorCount = 0;
+        int livePassCount = 0;
+        int liveFailCount = 0;
+
         var placedByApartmentId = new Dictionary<string, List<PlacedCollector>>();
 
         using Transaction tx = new(doc, "PlumbingSystem - Place Collectors");
@@ -141,6 +162,28 @@ public class PlaceCollectorsCommand : IExternalCommand
                         RoomNumber: roomNumber,
                         LevelName: levelName,
                         Verification: verification));
+
+                    // דיווח-התקדמות: אחרי שהתוצאה האמיתית (כולל האלמנט
+                    // שכבר נוצר ואומת) כבר ידועה במלואה - לא ניחוש/צפי.
+                    processedCollectorCount++;
+                    if (verification.OverallPass)
+                    {
+                        livePassCount++;
+                    }
+                    else
+                    {
+                        liveFailCount++;
+                    }
+
+                    TryReport(progressReporter, new ProgressReport(
+                        Floor: apartment.FloorNumber.ToString(CultureInfo.InvariantCulture),
+                        Apartment: apartment.Id,
+                        CurrentItem: rawCollector.Id,
+                        ProgressCurrent: processedCollectorCount,
+                        ProgressTotal: totalCollectorCount,
+                        SuccessCount: livePassCount,
+                        ManualReviewCount: liveFailCount,
+                        StatusMessage: verification.OverallPass ? "Placed successfully" : "Verification failed"));
                 }
 
                 placedByApartmentId[apartment.Id] = placedForApartment;
@@ -155,12 +198,16 @@ public class PlaceCollectorsCommand : IExternalCommand
                 tx.RollBack();
             }
 
+            TryComplete(progressReporter, $"Failed - all changes rolled back: {ex.Message}");
+
             message = ex.Message;
             TaskDialog.Show(
                 "PlumbingSystem - מיקום קולטנים נכשל",
                 $"שגיאה תוך כדי יצירת אלמנטים - כל השינויים בוטלו (Rollback):\n\n{ex.Message}");
             return Result.Failed;
         }
+
+        TryComplete(progressReporter, $"Done - {livePassCount} passed, {liveFailCount} failed verification.");
 
         string report = BuildReport(apartments, placedByApartmentId, deletedCollectorCount, deletedCollectorMaterial, scopeDescription, readerWarnings);
 
@@ -172,6 +219,34 @@ public class PlaceCollectorsCommand : IExternalCommand
         Process.Start(new ProcessStartInfo(path) { UseShellExecute = true });
 
         return Result.Succeeded;
+    }
+
+    /// <summary>
+    /// עוטפת קריאה ל-<see cref="IProgressReporter.Report"/> ב-try/catch -
+    /// כשל-UI לעולם לא יכול להפיל את הפעולה ההנדסית. אותו עיקרון בדיוק
+    /// כמו ב-DrawPipesCommand - ראו docs/progress-infrastructure.md.
+    /// </summary>
+    private static void TryReport(IProgressReporter reporter, ProgressReport update)
+    {
+        try
+        {
+            reporter.Report(update);
+        }
+        catch
+        {
+        }
+    }
+
+    /// <summary>ראו <see cref="TryReport"/> - אותו עיקרון בדיוק, עבור <see cref="IProgressReporter.Complete"/>.</summary>
+    private static void TryComplete(IProgressReporter reporter, string finalMessage)
+    {
+        try
+        {
+            reporter.Complete(finalMessage);
+        }
+        catch
+        {
+        }
     }
 
     /// <summary>

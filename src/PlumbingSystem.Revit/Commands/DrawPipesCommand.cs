@@ -7,6 +7,7 @@ using Autodesk.Revit.UI;
 using PlumbingSystem.Core.Domain;
 using PlumbingSystem.Core.Geometry;
 using PlumbingSystem.Core.Models;
+using PlumbingSystem.Revit.Progress;
 
 namespace PlumbingSystem.Revit.Commands;
 
@@ -152,6 +153,26 @@ public class DrawPipesCommand : IExternalCommand
             return Result.Failed;
         }
 
+        // דיווח-התקדמות-חי (ראו docs/progress-infrastructure.md) - נוצר
+        // רק **אחרי** ש-apartments כבר נקראו בהצלחה (מספר-הפריטים-הכולל
+        // ידוע בפועל, לא הערכה). כישלון ביצירת-החלון עצמו (למשל בעיית-
+        // WPF כלשהי) נופל בחזרה ל-NullProgressReporter - הריצה ההנדסית
+        // ממשיכה בדיוק כרגיל, בלי שום תלות בהצלחת-ה-UI.
+        int totalFixtureCount = apartments.Sum(a => a.Fixtures.Count);
+        IProgressReporter progressReporter;
+        try
+        {
+            progressReporter = new ProgressWindowReporter("Draw Pipes", totalFixtureCount);
+        }
+        catch
+        {
+            progressReporter = NullProgressReporter.Instance;
+        }
+
+        int processedFixtureCount = 0;
+        int liveSuccessCount = 0;
+        int liveManualCount = 0;
+
         var drawnByApartmentId = new Dictionary<string, List<DrawnPipe>>();
 
         using Transaction tx = new(doc, "PlumbingSystem - Draw Pipes");
@@ -246,6 +267,30 @@ public class DrawPipesCommand : IExternalCommand
                             requiresManualEngineering,
                             diagnostics,
                             blockingWallGeometry));
+
+                        // דיווח-התקדמות: **אחרי** שהתוצאה האמיתית של המקטע
+                        // הזה כבר ידועה במלואה (כולל האלמנט שכבר נוצר
+                        // ב-Revit) - לא ניחוש/צפי. לא משנה את סדר-העיבוד
+                        // או משהו אחר בלולאה - רק שורה נוספת בסופה.
+                        processedFixtureCount++;
+                        if (requiresManualEngineering)
+                        {
+                            liveManualCount++;
+                        }
+                        else
+                        {
+                            liveSuccessCount++;
+                        }
+
+                        TryReport(progressReporter, new ProgressReport(
+                            Floor: apartment.FloorNumber.ToString(CultureInfo.InvariantCulture),
+                            Apartment: apartment.Id,
+                            CurrentItem: fixture.Id,
+                            ProgressCurrent: processedFixtureCount,
+                            ProgressTotal: totalFixtureCount,
+                            SuccessCount: liveSuccessCount,
+                            ManualReviewCount: liveManualCount,
+                            StatusMessage: requiresManualEngineering ? "Manual review required" : "Routed successfully"));
                     }
                 }
 
@@ -261,12 +306,16 @@ public class DrawPipesCommand : IExternalCommand
                 tx.RollBack();
             }
 
+            TryComplete(progressReporter, $"Failed - all changes rolled back: {ex.Message}");
+
             message = ex.Message;
             TaskDialog.Show(
                 "PlumbingSystem - ציור צינורות נכשל",
                 $"שגיאה תוך כדי יצירת צינורות - כל השינויים בוטלו (Rollback):\n\n{ex.Message}");
             return Result.Failed;
         }
+
+        TryComplete(progressReporter, $"Done - {liveSuccessCount} succeeded, {liveManualCount} require manual review.");
 
         string report = BuildReport(doc, apartments, drawnByApartmentId, deletedPipeCount, scopeDescription, readerWarnings);
 
@@ -305,6 +354,36 @@ public class DrawPipesCommand : IExternalCommand
         }
 
         return Result.Succeeded;
+    }
+
+    /// <summary>
+    /// עוטפת קריאה ל-<see cref="IProgressReporter.Report"/> ב-try/catch -
+    /// כשל-UI (מכל סוג) לעולם לא יכול להפיל את הפעולה ההנדסית האמיתית.
+    /// זו העטיפה בצד-הקורא - הגנה **נוספת** על-גבי ההגנה-הפנימית שכבר
+    /// יש ב-<see cref="ProgressWindowReporter"/> עצמה, לא תחליף לה. ראו
+    /// docs/progress-infrastructure.md.
+    /// </summary>
+    private static void TryReport(IProgressReporter reporter, ProgressReport update)
+    {
+        try
+        {
+            reporter.Report(update);
+        }
+        catch
+        {
+        }
+    }
+
+    /// <summary>ראו <see cref="TryReport"/> - אותו עיקרון בדיוק, עבור <see cref="IProgressReporter.Complete"/>.</summary>
+    private static void TryComplete(IProgressReporter reporter, string finalMessage)
+    {
+        try
+        {
+            reporter.Complete(finalMessage);
+        }
+        catch
+        {
+        }
     }
 
     /// <summary>

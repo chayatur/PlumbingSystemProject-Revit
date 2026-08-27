@@ -1,0 +1,73 @@
+<Window x:Class="PlumbingSystem.Revit.Progress.ProgressWindow"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        Title="Startarc - Progress"
+        Height="560" Width="640"
+        WindowStartupLocation="CenterScreen"
+        ResizeMode="CanResizeWithGrip">
+    <Grid Margin="18">
+        <Grid.RowDefinitions>
+            <RowDefinition Height="Auto"/>
+            <RowDefinition Height="Auto"/>
+            <RowDefinition Height="Auto"/>
+            <RowDefinition Height="*"/>
+            <RowDefinition Height="Auto"/>
+        </Grid.RowDefinitions>
+
+        <StackPanel Grid.Row="0" Margin="0,0,0,12">
+            <TextBlock Text="{Binding OperationName}" FontSize="20" FontWeight="Bold"/>
+            <TextBlock FontSize="13" Foreground="#6B7280" Margin="0,4,0,0">
+                <Run Text="Floor: "/><Run Text="{Binding Floor, Mode=OneWay}"/>
+                <Run Text="    Apartment: "/><Run Text="{Binding Apartment, Mode=OneWay}"/>
+                <Run Text="    Item: "/><Run Text="{Binding CurrentItem, Mode=OneWay}"/>
+            </TextBlock>
+        </StackPanel>
+
+        <StackPanel Grid.Row="1" Margin="0,0,0,12">
+            <ProgressBar Height="18" Minimum="0"
+                         Maximum="{Binding ProgressTotal, Mode=OneWay}"
+                         Value="{Binding ProgressCurrent, Mode=OneWay}"/>
+            <TextBlock Margin="0,4,0,0" FontSize="12" Foreground="#6B7280" HorizontalAlignment="Right">
+                <Run Text="{Binding ProgressCurrent, Mode=OneWay}"/><Run Text=" / "/><Run Text="{Binding ProgressTotal, Mode=OneWay}"/>
+            </TextBlock>
+        </StackPanel>
+
+        <StackPanel Grid.Row="2" Orientation="Horizontal" Margin="0,0,0,12">
+            <Border Background="#EAF6EC" BorderBrush="#2E7D32" BorderThickness="1" CornerRadius="8" Padding="18,10" Margin="0,0,12,0">
+                <StackPanel>
+                    <TextBlock Text="{Binding SuccessCount, Mode=OneWay}" FontSize="28" FontWeight="Bold" Foreground="#2E7D32" HorizontalAlignment="Center"/>
+                    <TextBlock Text="Success" FontSize="12" Foreground="#6B7280" HorizontalAlignment="Center"/>
+                </StackPanel>
+            </Border>
+            <Border Background="#FDF1E6" BorderBrush="#EF6C00" BorderThickness="1" CornerRadius="8" Padding="18,10">
+                <StackPanel>
+                    <TextBlock Text="{Binding ManualReviewCount, Mode=OneWay}" FontSize="28" FontWeight="Bold" Foreground="#EF6C00" HorizontalAlignment="Center"/>
+                    <TextBlock Text="Manual Review" FontSize="12" Foreground="#6B7280" HorizontalAlignment="Center"/>
+                </StackPanel>
+            </Border>
+        </StackPanel>
+
+        <ListBox x:Name="RowsList" Grid.Row="3" ItemsSource="{Binding Rows}" BorderBrush="#E5E7EB" BorderThickness="1">
+            <ListBox.ItemTemplate>
+                <DataTemplate>
+                    <TextBlock Margin="4,2" FontSize="13" TextWrapping="Wrap">
+                        <Run Text="{Binding Apartment, Mode=OneWay}" FontWeight="Bold"/>
+                        <Run Text=" - "/>
+                        <Run Text="{Binding Item, Mode=OneWay}"/>
+                        <Run Text=": "/>
+                        <Run Text="{Binding StatusMessage, Mode=OneWay}"/>
+                    </TextBlock>
+                </DataTemplate>
+            </ListBox.ItemTemplate>
+        </ListBox>
+
+        <Grid Grid.Row="4" Margin="0,12,0,0">
+            <Grid.ColumnDefinitions>
+                <ColumnDefinition Width="*"/>
+                <ColumnDefinition Width="Auto"/>
+            </Grid.ColumnDefinitions>
+            <TextBlock Grid.Column="0" Text="{Binding StatusMessage, Mode=OneWay}" FontStyle="Italic" Foreground="#6B7280" VerticalAlignment="Center"/>
+            <Button Grid.Column="1" Content="Close" Padding="16,6" Click="CloseButton_Click"/>
+        </Grid>
+    </Grid>
+</Window>
