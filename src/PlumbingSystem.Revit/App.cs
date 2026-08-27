@@ -1,6 +1,9 @@
 using Autodesk.Revit.Attributes;
+using Autodesk.Revit.DB;
 using Autodesk.Revit.UI;
+using Autodesk.Revit.UI.Events;
 using PlumbingSystem.Revit.Commands;
+using PlumbingSystem.Revit.Inspector;
 
 namespace PlumbingSystem.Revit;
 
@@ -13,6 +16,10 @@ public class App : IExternalApplication
 {
     private const string TabName = "Startarc";
     private const string PanelName = "אינסטלציה";
+
+    // נוצר פעם אחת ב-OnStartup, לפני שנפתח מסמך כלשהו - ראו
+    // ConnectionInspectorPaneProvider ו-docs/connection-inspector.md.
+    private readonly ConnectionInspectorPaneProvider _connectionInspectorPaneProvider = new();
 
     /// <summary>
     /// נקרא פעם אחת בעת עליית Revit. יוצר את לשונית "Startarc", בתוכה פאנל
@@ -110,17 +117,76 @@ public class App : IExternalApplication
         panel.AddItem(collectorSetbackDiagnosticButtonData);
         panel.AddItem(generateClientReportButtonData);
 
+        // "Connection Inspector" - פאנל-מעוגן (לא כפתור-ריבון): Revit
+        // מוסיף אותו אוטומטית ל-View → User Interface. חייב להירשם כאן,
+        // לפני שנפתח מסמך כלשהו - ראו docs/connection-inspector.md.
+        application.RegisterDockablePane(
+            ConnectionInspectorPaneProvider.PaneId,
+            "Connection Inspector",
+            _connectionInspectorPaneProvider);
+
+        application.SelectionChanged += OnSelectionChanged;
+
         return Result.Succeeded;
     }
 
     /// <summary>
-    /// נקרא פעם אחת בעת סגירת Revit. בשלב הנוכחי אין event handlers, קבצים
-    /// פתוחים או משאבים חיצוניים אחרים לשחרר, ולכן רק מחזירה הצלחה.
+    /// מתעדכן בכל שינוי-בחירה בכל מסמך פתוח - קורא-בלבד
+    /// (<see cref="ElementRelationshipLookup"/>, שכבר persisted במודל,
+    /// לא מחשבת שום דבר), לא נוגע במודל. עטוף כולו ב-try/catch - כשל
+    /// בפאנל-האינפורמציה לעולם לא יכול להפיל שום דבר אחר ב-Revit.
+    /// </summary>
+    private void OnSelectionChanged(object? sender, SelectionChangedEventArgs e)
+    {
+        try
+        {
+            ConnectionInspectorViewModel viewModel = _connectionInspectorPaneProvider.ViewModel;
+
+            // האירוע הזה נגרם על ידי Highlight() עצמה (SetElementIds
+            // משנה את הבחירה, מה שמעורר SelectionChanged נוסף) - לא
+            // בחירה אמיתית של המשתמש/ת. מתעלמים לגמרי, כולל לא-מעדכנים
+            // את CurrentUiDocument - ראו docs/connection-inspector.md.
+            if (viewModel.ConsumeSuppressNextSelectionChanged())
+            {
+                return;
+            }
+
+            UIDocument? uidoc = (sender as UIApplication)?.ActiveUIDocument;
+            viewModel.CurrentUiDocument = uidoc;
+
+            ICollection<ElementId> selected = e.GetSelectedElements();
+            if (selected.Count != 1 || uidoc is null)
+            {
+                viewModel.ShowNoSelection();
+                return;
+            }
+
+            ElementRelationshipLookup.RelationshipInfo? info =
+                ElementRelationshipLookup.TryDescribe(uidoc.Document, selected.First());
+
+            if (info is null)
+            {
+                viewModel.ShowNotRelevant();
+            }
+            else
+            {
+                viewModel.ShowRelationship(info);
+            }
+        }
+        catch
+        {
+        }
+    }
+
+    /// <summary>
+    /// נקרא פעם אחת בעת סגירת Revit - מסיר את מנוי ה-SelectionChanged
+    /// שנרשם ב-OnStartup (ראו שם).
     /// </summary>
     /// <param name="application">אובייקט הבקרה של Revit UI.</param>
     /// <returns><see cref="Result.Succeeded"/>.</returns>
     public Result OnShutdown(UIControlledApplication application)
     {
+        application.SelectionChanged -= OnSelectionChanged;
         return Result.Succeeded;
     }
 }
