@@ -36,9 +36,12 @@ public class GenerateClientReportCommand : IExternalCommand
 {
     /// <summary>
     /// מוצאת את קובץ-ה-Pipes האחרון (הכי-חדש, לפי חותמת-הזמן בשם
-    /// הקובץ) בתיקיית-הטמפ, מנתחת אותו, בונה HTML, כותבת אותו לאותה
-    /// תיקייה בדיוק (<c>PlumbingSystem_ClientReport_&lt;timestamp&gt;.html</c>)
-    /// ופותחת אותו בדפדפן ברירת-המחדל.
+    /// הקובץ) בתיקיית-הטמפ, מנתחת אותו, בונה HTML, ואז מציגה חלון
+    /// "שמור בשם" רגיל של Windows כדי שהמשתמש/ת יבחר/תבחר מיקום-קבוע
+    /// (לא תמיד Temp, כמו קודם) - שם-קובץ ברירת-מחדל
+    /// <c>PlumbingSystem_ClientReport_&lt;timestamp&gt;.html</c>. אם
+    /// בוטל - <see cref="Result.Cancelled"/>, שום קובץ לא נכתב. אחרת,
+    /// נכתב למיקום-שנבחר ונפתח שם בדפדפן ברירת-המחדל.
     /// </summary>
     /// <param name="commandData">נתוני ההקשר של הפקודה - לא בשימוש (קריאת-קובץ בלבד, בלי גישה למודל).</param>
     /// <param name="message">מתמלא בהודעת שגיאה אם לא נמצא קובץ-מקור או שהניתוח נכשל.</param>
@@ -74,12 +77,27 @@ public class GenerateClientReportCommand : IExternalCommand
 
         string html = BuildHtml(report, Path.GetFileName(latestPipesReportPath));
 
-        string outputPath = Path.Combine(
-            tempPath,
-            $"PlumbingSystem_ClientReport_{DateTime.Now:yyyyMMdd_HHmmss}.html");
-        File.WriteAllText(outputPath, html, Encoding.UTF8);
+        // חלון "שמור בשם" רגיל של Windows - במקום כתיבה שקטה ל-Temp -
+        // כדי שהמשתמש/ת יבחר/תבחר מיקום-קבוע (Desktop/Documents/תיקיית-
+        // פרויקט/כל מקום אחר). לא קובעים תיקיית-פתיחה - Windows זוכר
+        // אוטומטית את התיקייה האחרונה שנבחרה, כמו בכל חלון-שמירה רגיל.
+        // ביטול (ShowDialog() != true) יוצא **לפני** File.WriteAllText/
+        // Process.Start - שום קובץ לא נכתב, שום שגיאה. ראו docs/client-report.md.
+        var saveDialog = new Microsoft.Win32.SaveFileDialog
+        {
+            FileName = $"PlumbingSystem_ClientReport_{DateTime.Now:yyyyMMdd_HHmmss}.html",
+            Filter = "HTML file (*.html)|*.html",
+            DefaultExt = ".html",
+        };
 
-        Process.Start(new ProcessStartInfo(outputPath) { UseShellExecute = true });
+        if (saveDialog.ShowDialog() != true)
+        {
+            return Result.Cancelled;
+        }
+
+        File.WriteAllText(saveDialog.FileName, html, Encoding.UTF8);
+
+        Process.Start(new ProcessStartInfo(saveDialog.FileName) { UseShellExecute = true });
 
         return Result.Succeeded;
     }
