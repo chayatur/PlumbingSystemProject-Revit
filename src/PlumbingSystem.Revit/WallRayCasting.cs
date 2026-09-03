@@ -91,12 +91,34 @@ internal sealed class WallRayCasting
     /// (לא שכפול-קוד נפרד) - כדי ששתי הבדיקות (בוליאנית/מפורטת) לעולם
     /// לא יסטו זו מזו בטעות.
     /// </summary>
+    /// <param name="from">נקודת המוצא של הקו (בד"כ מיקום אסלה או תחילת מקטע-דרך).</param>
+    /// <param name="to">נקודת היעד של הקו (בד"כ מיקום אלמנט רטוב/קולטן או סוף מקטע-דרך).</param>
+    /// <param name="levelId">ה-Level שאליו מסננים קירות מועמדים לבדיקה.</param>
+    /// <param name="excludeWallId1">קיר להחריג לגמרי מהתוצאה (לרוב ה-Host wall של אלמנט המוצא).</param>
+    /// <param name="excludeWallId2">אותו הסבר כמו <paramref name="excludeWallId1"/>, עבור אלמנט היעד.</param>
+    /// <param name="penetrableWallIds">
+    /// קירות שמותר ל-route לחדור לתוכם בקרבת סוף הקרן - לפי הכלל ההנדסי
+    /// שאושר (2026-09-02): צינור ביוב רשאי להיכנס לתוך עובי הקיר שמכיל
+    /// את הקולטן, בדרך אל הקולטן. פגיעה על קיר כזה שנמצאת בתוך
+    /// <paramref name="penetrableWithinEndDistanceFeet"/> מסוף הקרן
+    /// (<paramref name="to"/>) **אינה** נחשבת חסימה. <c>null</c> (ברירת
+    /// מחדל) = ההתנהגות הישנה בדיוק (למשל בדיקת החסימה של
+    /// <c>RevitModelReader</c> בין אסלה לאלמנט רטוב).
+    /// </param>
+    /// <param name="penetrableWithinEndDistanceFeet">
+    /// המרחק המרבי (יחידות-Revit פנימיות, feet) מסוף הקרן שבתוכו פגיעה
+    /// על <paramref name="penetrableWallIds"/> מותרת. מעבר לו - פגיעה על
+    /// אותם קירות **כן** חוסמת (route ש"מתגלגל" לאורך הקיר, לא נכנס אליו
+    /// רק בסוף). לא רלוונטי כש-<paramref name="penetrableWallIds"/> הוא <c>null</c>.
+    /// </param>
     public BlockingWallHit? FindBlockingWallDetailed(
         XYZ from,
         XYZ to,
         ElementId levelId,
         ElementId? excludeWallId1 = null,
-        ElementId? excludeWallId2 = null)
+        ElementId? excludeWallId2 = null,
+        IReadOnlySet<ElementId>? penetrableWallIds = null,
+        double penetrableWithinEndDistanceFeet = 0.0)
     {
         XYZ vector = to - from;
         double distance = vector.GetLength();
@@ -120,6 +142,18 @@ internal sealed class WallRayCasting
 
             ElementId hitWallId = hit.GetReference().ElementId;
             if (hitWallId == excludeWallId1 || hitWallId == excludeWallId2)
+            {
+                continue;
+            }
+
+            // הכלל ההנדסי שאושר (שלב 7, 2026-09-02): route בדרך אל הקולטן
+            // רשאי לחדור לתוך קיר שמכיל את הקולטן - פגיעה על אחד מ-
+            // penetrableWallIds שנמצאת בתוך penetrableWithinEndDistanceFeet
+            // מסוף הקרן (= מהקולטן) אינה חסימה. קירות אחרים, ופגיעות רחוקות
+            // יותר מסוף הקרן - כן חוסמות (ראו DrawPipesCommand.FindCollectorWallPenetration).
+            if (penetrableWallIds is not null
+                && penetrableWallIds.Contains(hitWallId)
+                && (distance - hit.Proximity) <= penetrableWithinEndDistanceFeet)
             {
                 continue;
             }

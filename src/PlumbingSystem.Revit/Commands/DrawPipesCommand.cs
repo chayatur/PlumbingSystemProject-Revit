@@ -7,6 +7,7 @@ using Autodesk.Revit.UI;
 using PlumbingSystem.Core.Domain;
 using PlumbingSystem.Core.Geometry;
 using PlumbingSystem.Core.Models;
+using PlumbingSystem.Revit.Config;
 using PlumbingSystem.Revit.Progress;
 
 namespace PlumbingSystem.Revit.Commands;
@@ -92,6 +93,28 @@ public class DrawPipesCommand : IExternalCommand
     /// אמור להיקרא מיד בתוכנית-קומה רגילה, לא להיבלע בטקסט ארוך.
     /// </summary>
     private const string ManualEngineeringNoteText = "דורש בדיקת מהנדס";
+
+    /// <summary>
+    /// כלל הנדסי שאושר במפורש (2026-09-02, המנהלת): **מותר לצינור הביוב
+    /// להיכנס לתוך עובי הקיר כדי להגיע לקולטן ולהתחבר אליו**. הקבוע הזה
+    /// חוסם את החדירה כדי שלא "תזלוג": route בדרך אל הקולטן רשאי לחדור
+    /// לתוך קיר ש**גוף-הקיר שלו מכיל את הקולטן** (ראו <see cref="FindCollectorWallPenetration"/>) -
+    /// אבל רק במקטע האחרון (זה שמסתיים בקולטן), ורק עד למרחק
+    /// <c>עובי-הקיר × הגורם הזה</c> מסוף המקטע (= מהקולטן). גורם 2.0 (לא
+    /// 1.0) כדי לאפשר גם כניסה אלכסונית לקיר (הצינור עובר מרחק גדול
+    /// מעובי-הקיר-הנקי כשהוא לא ניצב אליו), אבל עדיין חוסם route
+    /// ש"מתגלגל" לאורך הקיר הרבה מעבר לכך. **קירות אחרים בדרך - obstruction
+    /// רגיל, ללא שינוי.** ראו docs/pipe-rca-chain.md חלק ה'.
+    /// </summary>
+    private const double CollectorWallPenetrationWidthFactor = 2.0;
+
+    /// <summary>
+    /// סבילות (מטרים) לקביעה "מיקום הקולטן נמצא בתוך גוף הקיר הזה" -
+    /// נבדק כ-<c>מרחק(קולטן, קו-מיקום-הקיר) ≤ חצי-עובי-הקיר + הסבילות
+    /// הזו</c>. קטן בכוונה (2 ס"מ) - רק שוליים לדיוק floating-point, לא
+    /// מרווח הנדסי.
+    /// </summary>
+    private const double CollectorWallContainmentToleranceMeters = 0.02;
 
     /// <summary>
     /// מריצה <see cref="RevitModelReader.ReadApartments"/> ו-
@@ -478,6 +501,26 @@ public class DrawPipesCommand : IExternalCommand
             return (new[] { straightSegment }, false, false, false, null, null);
         }
 
+        // הכלל ההנדסי שאושר (2026-09-02, המנהלת): מותר לצינור להיכנס לתוך
+        // עובי הקיר שמכיל את הקולטן, בדרך אל הקולטן. מאתרים את הקיר/ים
+        // האלה **רק כשכבר יש חסימה** (אין עלות למקטעים תקינים), ובודקים
+        // מחדש את המסלול הישר: אם החסימה היחידה הייתה הכניסה לקיר של
+        // הקולטן - המסלול הישר כשר עכשיו. אם עדיין חוסם קיר אחר - ממשיכים
+        // לניסיונות-העקיפה מול אותו קיר, כשגם להם מותרת אותה חדירה במקטע
+        // האחרון. ראו CollectorWallPenetrationWidthFactor, docs/pipe-rca-chain.md.
+        CollectorWallPenetration? collectorWalls = FindCollectorWallPenetration(doc, fixture, collector);
+        if (collectorWalls is not null)
+        {
+            ElementId? blockingWallIdAllowingCollectorWall =
+                FindObstructingWall(doc, wallRayCasting, fixture, straightSegment, collectorWalls);
+            if (blockingWallIdAllowingCollectorWall is null)
+            {
+                return (new[] { straightSegment }, false, false, false, null, null);
+            }
+
+            blockingWallId = blockingWallIdAllowingCollectorWall;
+        }
+
         WallEdgeSnapper.WallSegment? wallSegment = GetWallSegment(doc, blockingWallId!);
         if (wallSegment is null)
         {
@@ -486,18 +529,18 @@ public class DrawPipesCommand : IExternalCommand
 
         // סבב 1: זווית-הפנייה נגזרת מ-D (הקו הישר) - ראו docs/step7.md.
         IReadOnlyList<PipeSegment>? attempt =
-            TryBuildDetour(doc, wallRayCasting, fixture, collector, wallSegment.Value, useOppositeSide: false, useWallDirectionAsReference: false, diagnostics)
-            ?? TryBuildDetour(doc, wallRayCasting, fixture, collector, wallSegment.Value, useOppositeSide: true, useWallDirectionAsReference: false, diagnostics)
-            ?? TryBuildStaggeredDetour(doc, wallRayCasting, fixture, collector, wallSegment.Value, useWallDirectionAsReference: false, diagnostics)
+            TryBuildDetour(doc, wallRayCasting, fixture, collector, wallSegment.Value, useOppositeSide: false, useWallDirectionAsReference: false, diagnostics, collectorWalls)
+            ?? TryBuildDetour(doc, wallRayCasting, fixture, collector, wallSegment.Value, useOppositeSide: true, useWallDirectionAsReference: false, diagnostics, collectorWalls)
+            ?? TryBuildStaggeredDetour(doc, wallRayCasting, fixture, collector, wallSegment.Value, useWallDirectionAsReference: false, diagnostics, collectorWalls)
             // סבב 2: זווית-הפנייה נגזרת מכיוון **הקיר החוסם עצמו** - לא
             // שאלת-כיוונון-קודמת, שאלה חדשה (ראו התיעוד ב-
             // PipeRouteCalculator.ComputeBendDirections). ייתכן שהבנייה
             // הזו תיכשל (גיאומטרית - "אחורה") ליותר גיאומטריות מהגרסה
             // המבוססת-D, כי U1/U2 לא בהכרח קרובים לכיוון-ההתקדמות - זה
             // מטופל כבר (try/catch) בדיוק כמו כל ניסיון אחר.
-            ?? TryBuildDetour(doc, wallRayCasting, fixture, collector, wallSegment.Value, useOppositeSide: false, useWallDirectionAsReference: true, diagnostics)
-            ?? TryBuildDetour(doc, wallRayCasting, fixture, collector, wallSegment.Value, useOppositeSide: true, useWallDirectionAsReference: true, diagnostics)
-            ?? TryBuildStaggeredDetour(doc, wallRayCasting, fixture, collector, wallSegment.Value, useWallDirectionAsReference: true, diagnostics);
+            ?? TryBuildDetour(doc, wallRayCasting, fixture, collector, wallSegment.Value, useOppositeSide: false, useWallDirectionAsReference: true, diagnostics, collectorWalls)
+            ?? TryBuildDetour(doc, wallRayCasting, fixture, collector, wallSegment.Value, useOppositeSide: true, useWallDirectionAsReference: true, diagnostics, collectorWalls)
+            ?? TryBuildStaggeredDetour(doc, wallRayCasting, fixture, collector, wallSegment.Value, useWallDirectionAsReference: true, diagnostics, collectorWalls);
 
         if (attempt is not null)
         {
@@ -685,6 +728,12 @@ public class DrawPipesCommand : IExternalCommand
     /// זרקה (ואיזו הודעה), ואם לא - איפה בדיוק (אם בכלל) המסלול פגע
     /// בקיר. ראו <see cref="BuildManualEngineeringDiagnosticReport"/>.
     /// </param>
+    /// <param name="collectorWalls">
+    /// אם ניתנה (לא <c>null</c>) - הכלל ההנדסי שאושר (2026-09-02): המקטע
+    /// האחרון (זה שמסתיים בקולטן) רשאי לחדור לתוך הקירות שמכילים את
+    /// הקולטן, עד לקולטן. מועבר כמו-שהוא ל-<see cref="FindObstructingWallForRouteDetailed"/>.
+    /// ראו <see cref="FindCollectorWallPenetration"/>.
+    /// </param>
     private static IReadOnlyList<PipeSegment>? TryBuildStaggeredDetour(
         Document doc,
         WallRayCasting wallRayCasting,
@@ -692,7 +741,8 @@ public class DrawPipesCommand : IExternalCommand
         CollectorPoint collector,
         WallEdgeSnapper.WallSegment wallSegment,
         bool useWallDirectionAsReference,
-        List<AttemptDiagnostic>? diagnostics = null)
+        List<AttemptDiagnostic>? diagnostics = null,
+        CollectorWallPenetration? collectorWalls = null)
     {
         foreach (double crossoverLengthMeters in StaggeredCrossoverLengthCandidatesMeters)
         {
@@ -717,7 +767,7 @@ public class DrawPipesCommand : IExternalCommand
                     continue;
                 }
 
-                RouteObstructionResult obstruction = FindObstructingWallForRouteDetailed(doc, wallRayCasting, fixture, segments);
+                RouteObstructionResult obstruction = FindObstructingWallForRouteDetailed(doc, wallRayCasting, fixture, segments, collectorWalls);
                 RecordAttempt(diagnostics, label, segments, obstruction);
 
                 // אותו עיקרון בדיוק כמו לפני התוספת: יציאה מיידית בהצלחה
@@ -755,6 +805,7 @@ public class DrawPipesCommand : IExternalCommand
     /// אם ניתנה (לא <c>null</c>) - הניסיון הזה מתועד כ-<see cref="AttemptDiagnostic"/>
     /// משלו. ראו התיעוד המקביל ב-<see cref="TryBuildStaggeredDetour"/>.
     /// </param>
+    /// <param name="collectorWalls">ראו התיעוד המקביל ב-<see cref="TryBuildStaggeredDetour"/> - הכלל ההנדסי שאושר (2026-09-02): חדירה מותרת לקירות שמכילים את הקולטן, במקטע האחרון בלבד.</param>
     private static IReadOnlyList<PipeSegment>? TryBuildDetour(
         Document doc,
         WallRayCasting wallRayCasting,
@@ -763,7 +814,8 @@ public class DrawPipesCommand : IExternalCommand
         WallEdgeSnapper.WallSegment wallSegment,
         bool useOppositeSide,
         bool useWallDirectionAsReference,
-        List<AttemptDiagnostic>? diagnostics = null)
+        List<AttemptDiagnostic>? diagnostics = null,
+        CollectorWallPenetration? collectorWalls = null)
     {
         string label = string.Format(
             CultureInfo.InvariantCulture,
@@ -783,7 +835,7 @@ public class DrawPipesCommand : IExternalCommand
             return null;
         }
 
-        RouteObstructionResult obstruction = FindObstructingWallForRouteDetailed(doc, wallRayCasting, fixture, segments);
+        RouteObstructionResult obstruction = FindObstructingWallForRouteDetailed(doc, wallRayCasting, fixture, segments, collectorWalls);
         RecordAttempt(diagnostics, label, segments, obstruction);
 
         return obstruction.WallId is null ? segments : null;
@@ -1008,8 +1060,9 @@ public class DrawPipesCommand : IExternalCommand
         Document doc,
         WallRayCasting wallRayCasting,
         ToiletFixture fixture,
-        PipeSegment segment) =>
-        FindObstructingWallDetailedSingle(doc, wallRayCasting, fixture, segment)?.WallId;
+        PipeSegment segment,
+        CollectorWallPenetration? collectorWalls = null) =>
+        FindObstructingWallDetailedSingle(doc, wallRayCasting, fixture, segment, collectorWalls)?.WallId;
 
     /// <summary>
     /// אותה לוגיקה בדיוק כמו <see cref="FindObstructingWall"/> (פתרון
@@ -1023,7 +1076,8 @@ public class DrawPipesCommand : IExternalCommand
         Document doc,
         WallRayCasting wallRayCasting,
         ToiletFixture fixture,
-        PipeSegment segment)
+        PipeSegment segment,
+        CollectorWallPenetration? collectorWalls = null)
     {
         if (!long.TryParse(fixture.Id, out long fixtureIdValue)
             || doc.GetElement(new ElementId(fixtureIdValue)) is not FamilyInstance familyInstance)
@@ -1037,7 +1091,23 @@ public class DrawPipesCommand : IExternalCommand
         XYZ from = RevitUnitConversion.ToRevitPoint(segment.StartPoint);
         XYZ to = RevitUnitConversion.ToRevitPoint(segment.EndPoint);
 
-        return wallRayCasting.FindBlockingWallDetailed(from, to, familyInstance.LevelId, familyInstance.Host?.Id, null);
+        // הכלל ההנדסי שאושר (2026-09-02): route בדרך אל הקולטן רשאי לחדור
+        // לתוך הקיר/ים שמכילים את הקולטן - אבל **רק** למקטע שמסתיים בקולטן
+        // עצמו (segment.EndPoint == מיקום הקולטן), ורק עד למרחק המותר
+        // מסוף המקטע. מקטע-ביניים (שמסתיים ב-waypoint) וכל קיר אחר -
+        // obstruction רגיל, ללא שינוי.
+        IReadOnlySet<ElementId>? penetrableWallIds = null;
+        double penetrableWithinEndDistanceFeet = 0.0;
+        if (collectorWalls is CollectorWallPenetration cw
+            && GeometryUtils.Distance2D(segment.EndPoint, cw.CollectorLocation) <= 1e-6)
+        {
+            penetrableWallIds = cw.WallIds;
+            penetrableWithinEndDistanceFeet = cw.AllowanceFeet;
+        }
+
+        return wallRayCasting.FindBlockingWallDetailed(
+            from, to, familyInstance.LevelId, familyInstance.Host?.Id, null,
+            penetrableWallIds, penetrableWithinEndDistanceFeet);
     }
 
     /// <summary>
@@ -1075,11 +1145,12 @@ public class DrawPipesCommand : IExternalCommand
         Document doc,
         WallRayCasting wallRayCasting,
         ToiletFixture fixture,
-        IReadOnlyList<PipeSegment> routeSegments)
+        IReadOnlyList<PipeSegment> routeSegments,
+        CollectorWallPenetration? collectorWalls = null)
     {
         for (int i = 0; i < routeSegments.Count; i++)
         {
-            WallRayCasting.BlockingWallHit? hit = FindObstructingWallDetailedSingle(doc, wallRayCasting, fixture, routeSegments[i]);
+            WallRayCasting.BlockingWallHit? hit = FindObstructingWallDetailedSingle(doc, wallRayCasting, fixture, routeSegments[i], collectorWalls);
             if (hit is not null)
             {
                 return new RouteObstructionResult(hit.Value.WallId, i, hit.Value.HitPoint, hit.Value.ProximityFeet);
@@ -1111,6 +1182,108 @@ public class DrawPipesCommand : IExternalCommand
             wallId.Value.ToString(CultureInfo.InvariantCulture),
             RevitUnitConversion.ToCorePoint(line.GetEndPoint(0)),
             RevitUnitConversion.ToCorePoint(line.GetEndPoint(1)));
+    }
+
+    /// <summary>
+    /// תוצאת <see cref="FindCollectorWallPenetration"/>: מזהי הקירות
+    /// שגוף-הקיר שלהם מכיל (או כמעט מכיל) את מיקום הקולטן, מיקום הקולטן
+    /// עצמו (לזיהוי "המקטע שמסתיים בקולטן"), והמרחק המרבי (feet) שמותר
+    /// ל-route לחדור לתוכם בדרך אל הקולטן. ראו
+    /// <see cref="CollectorWallPenetrationWidthFactor"/>.
+    /// </summary>
+    private readonly record struct CollectorWallPenetration(
+        IReadOnlySet<ElementId> WallIds,
+        Point3D CollectorLocation,
+        double AllowanceFeet);
+
+    /// <summary>
+    /// מאתרת את הקירות (על ה-Level של האסלה) שגוף-הקיר שלהם מכיל את
+    /// מיקום הקולטן <b>וגם</b> ש-<see cref="Config.WallPenetrationPolicy.IsPenetrationAllowed"/>
+    /// מתיר לחדור אליהם (הכלל העסקי: קיר-בטון אסור, כל קיר אחר מותר;
+    /// זיהוי "בטון" לפי קובץ-ההגדרות המשרדי, מפתח <c>"Concrete wall"</c>) -
+    /// קיר <c>Basic</c> שקו-המיקום שלו עובר במרחק
+    /// <c>≤ חצי-עובי + <see cref="CollectorWallContainmentToleranceMeters"/></c>
+    /// ממיקום הקולטן, ושסוגו מותר לחדירה. לפי הכלל ההנדסי שאושר
+    /// (2026-09-02), route בדרך אל הקולטן רשאי לחדור לתוך הקירות האלה
+    /// עד לקולטן (לא מעבר, ולא דרך קירות אחרים - ראו
+    /// <see cref="CollectorWallPenetrationWidthFactor"/>). מחזירה
+    /// <c>null</c> אם אף קיר לא מכיל-ומותר - ואז בדיקת-החסימה זהה
+    /// לחלוטין להתנהגות שלפני התוספת (כולל: קיר-בטון שמכיל את הקולטן
+    /// יגרום כרגיל למקטע להיות <c>RequiresManualEngineering</c>).
+    /// **שער-ההרשאה הוא תנאי נוסף בלבד - אינו משנה את הכלל הגיאומטרי.**
+    /// </summary>
+    private static CollectorWallPenetration? FindCollectorWallPenetration(
+        Document doc, ToiletFixture fixture, CollectorPoint collector)
+    {
+        if (!long.TryParse(fixture.Id, out long fixtureIdValue)
+            || doc.GetElement(new ElementId(fixtureIdValue)) is not FamilyInstance familyInstance)
+        {
+            return null;
+        }
+
+        XYZ collectorPoint = RevitUnitConversion.ToRevitPoint(collector.Location);
+        double containmentToleranceFeet = UnitUtils.ConvertToInternalUnits(
+            CollectorWallContainmentToleranceMeters, UnitTypeId.Meters);
+
+        var wallsOnLevelFilter = new LogicalAndFilter(
+            new ElementCategoryFilter(BuiltInCategory.OST_Walls),
+            new ElementLevelFilter(familyInstance.LevelId));
+
+        var wallIds = new HashSet<ElementId>();
+        double maxWidthFeet = 0.0;
+
+        foreach (Wall wall in new FilteredElementCollector(doc)
+            .WherePasses(wallsOnLevelFilter)
+            .WhereElementIsNotElementType()
+            .OfType<Wall>())
+        {
+            if (wall.WallType?.Kind is not WallKind.Basic
+                || wall.Location is not LocationCurve locationCurve
+                || locationCurve.Curve is not Line line)
+            {
+                continue;
+            }
+
+            IntersectionResult? projection = line.Project(collectorPoint);
+            if (projection is null)
+            {
+                continue;
+            }
+
+            // מרחק **דו-ממדי** (X,Y) בלבד - כמו כל שאר לוגיקת-הניתוב
+            // (GeometryUtils.Distance2D, WallEdgeSnapper) - כדי שהפרש-Z
+            // אפשרי בין קו-מיקום-הקיר למיקום-האסלה לא יפסול קיר בטעות.
+            XYZ foot = projection.XYZPoint;
+            double dx = foot.X - collectorPoint.X;
+            double dy = foot.Y - collectorPoint.Y;
+            double distanceFeet = Math.Sqrt((dx * dx) + (dy * dy));
+            if (distanceFeet <= (wall.Width / 2.0) + containmentToleranceFeet)
+            {
+                // תנאי **נוסף** (AND) על הכלל הגיאומטרי - לא מחליף אותו:
+                // רק אם WallPenetrationPolicy מתיר (הכלל העסקי: קיר-בטון
+                // אסור, כל קיר אחר מותר; "בטון" לפי קובץ-ההגדרות המשרדי,
+                // מפתח "Concrete wall"). קיר-בטון, גם אם הוא מכיל את
+                // הקולטן, **אינו** מתווסף כאן → נשאר obstruction רגיל →
+                // detour → Manual Engineering, בדיוק כמו קיר שאינו מכיל
+                // את הקולטן. ראו Config/WallPenetrationPolicy.cs,
+                // Config/OfficeConfig.cs, docs/pipe-rca-chain.md חלק י"ג.
+                if (!WallPenetrationPolicy.IsPenetrationAllowed(wall, out _))
+                {
+                    continue;
+                }
+
+                wallIds.Add(wall.Id);
+                maxWidthFeet = Math.Max(maxWidthFeet, wall.Width);
+            }
+        }
+
+        if (wallIds.Count == 0)
+        {
+            return null;
+        }
+
+        return new CollectorWallPenetration(
+            wallIds, collector.Location, maxWidthFeet * CollectorWallPenetrationWidthFactor);
     }
 
     /// <summary>

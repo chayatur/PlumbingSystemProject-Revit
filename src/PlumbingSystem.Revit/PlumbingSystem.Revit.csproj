@@ -37,6 +37,12 @@
     <None Include="PlumbingSystem.addin">
       <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
     </None>
+    <!-- קובץ-ההגדרות המשרדי (ראו Config/OfficeConfig.cs) - מועתק לצד ה-DLL
+         כדי שהתוסף יקרא אותו בזמן ריצה. גם מועתק לתיקיית ה-Add-ins של
+         Revit ב-Target "CopyAddinToRevit" למטה. -->
+    <None Include="PlumbingSystem.OfficeConfig.txt">
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+    </None>
   </ItemGroup>
 
   <PropertyGroup>
@@ -60,6 +66,7 @@
       <RevitAddinFiles Include="$(TargetDir)$(AssemblyName).dll" />
       <RevitAddinFiles Include="$(TargetDir)$(AssemblyName).pdb" Condition="Exists('$(TargetDir)$(AssemblyName).pdb')" />
       <RevitAddinFiles Include="$(ProjectDir)PlumbingSystem.addin" />
+      <RevitAddinFiles Include="$(ProjectDir)PlumbingSystem.OfficeConfig.txt" />
     </ItemGroup>
     <MakeDir Directories="$(RevitAddinsDir)" Condition="!Exists('$(RevitAddinsDir)')" />
     <Copy SourceFiles="@(RevitAddinFiles)" DestinationFolder="$(RevitAddinsDir)" SkipUnchangedFiles="false" />

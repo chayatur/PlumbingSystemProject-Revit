@@ -108,6 +108,36 @@ public class App : IExternalApplication
             assemblyPath,
             typeof(GenerateClientReportCommand).FullName);
 
+        // כפתור אבחון **זמני**, ReadOnly - חקירת מעבר-אפשרי מ-DirectShape
+        // ל-Pipe אמיתי (ראו DiscoverPipingTypesCommand) - להסרה יחד עם
+        // המחלקה עצמה כשהחקירה תסתיים.
+        var discoverPipingTypesButtonData = new PushButtonData(
+            "DiscoverPipingTypesCommand",
+            "אבחון סוגי-צנרת",
+            assemblyPath,
+            typeof(DiscoverPipingTypesCommand).FullName);
+
+        // כפתור אבחון **זמני**, ReadOnly - חקירת "חתימת-Connectors" של
+        // כל Family+Type תחת OST_PlumbingFixtures, כבסיס-נתונים לתכנון
+        // זיהוי-אסלה גנרי-שלא-תלוי-בשם-משפחה/Shared-Parameter (ראו
+        // DiscoverFixtureSignatureCommand) - להסרה כשהחקירה תסתיים.
+        var discoverFixtureSignatureButtonData = new PushButtonData(
+            "DiscoverFixtureSignatureCommand",
+            "אבחון חתימת-פיקסצ'ר",
+            assemblyPath,
+            typeof(DiscoverFixtureSignatureCommand).FullName);
+
+        // כפתור אבחון **זמני**, ReadOnly - אוסף את נתוני-הסיווג האמיתיים
+        // (WallType/חומרים/עובי/מבני) של קיר-הקולטן ושל הקירות החוסמים,
+        // לכל מסלול אסלה→קולטן, כבסיס להחלטה ההנדסית "אילו סוגי-קיר מותר
+        // לצינור לחדור" (ראו DiscoverCollectorWallsCommand, docs/pipe-rca-chain.md
+        // חלק ז'/ח') - להסרה כשהחקירה תסתיים.
+        var discoverCollectorWallsButtonData = new PushButtonData(
+            "DiscoverCollectorWallsCommand",
+            "אבחון קירות-קולטן",
+            assemblyPath,
+            typeof(DiscoverCollectorWallsCommand).FullName);
+
         panel.AddItem(readElementsButtonData);
         panel.AddItem(discoverModelButtonData);
         panel.AddItem(buildDomainModelButtonData);
@@ -116,6 +146,9 @@ public class App : IExternalApplication
         panel.AddItem(drawPipesButtonData);
         panel.AddItem(collectorSetbackDiagnosticButtonData);
         panel.AddItem(generateClientReportButtonData);
+        panel.AddItem(discoverPipingTypesButtonData);
+        panel.AddItem(discoverFixtureSignatureButtonData);
+        panel.AddItem(discoverCollectorWallsButtonData);
 
         // "Connection Inspector" - פאנל-מעוגן (לא כפתור-ריבון): Revit
         // מוסיף אותו אוטומטית ל-View → User Interface. חייב להירשם כאן,

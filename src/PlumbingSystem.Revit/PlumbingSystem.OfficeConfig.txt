@@ -1,0 +1,23 @@
+# PlumbingSystem - Office Configuration
+#
+# Maps STANDARD KEYS (defined by the software) to the values that exist in
+# THIS office's / project's Revit model. The routing logic never contains
+# project-specific element names - it asks for the standard key, and the
+# office adapts the value here.
+#
+# Same philosophy as the "Is_Toilet" Shared Parameter: the software fixes a
+# standard name, the office adapts it to their model. Here it is a config file.
+#
+# Format:
+#   Key = Value            (one entry per line)
+#   Key = Value1, Value2    (comma-separated list for multiple values)
+#   # ...                   (lines starting with '#' are comments; blank lines ignored)
+#   Encoding: UTF-8
+#
+# ---------------------------------------------------------------------------
+
+# "Concrete wall" - the WallType name(s) in this Revit model that represent
+# concrete walls a sewer-pipe route must NOT cross. Any WallType NOT listed
+# here is treated as non-concrete (crossable). If this key is missing/empty,
+# no wall type is treated as concrete (business rule: non-concrete => allowed).
+Concrete wall = קיר בטון 20

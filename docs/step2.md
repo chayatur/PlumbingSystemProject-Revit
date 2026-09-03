@@ -24,11 +24,17 @@ Revit לא סורק אוטומטית תיקיות `bin` של פרויקטים - 
 בפרויקט שלנו, `PlumbingSystem.addin` מצביע כרגע ל:
 
 ```
-C:\Users\user1\Desktop\STARTARC_PROJECT\src\PlumbingSystem.Revit\bin\Debug\net10.0-windows\PlumbingSystem.Revit.dll
+PlumbingSystem.Revit.dll
 ```
 
 עם `AddInId` = `9968f457-9f00-41a5-abd2-c0b1e672b45c` ו-`FullClassName` =
 `PlumbingSystem.Revit.App`.
+
+**תוקן (ראו "תיקון בעיית ההפצה למחשב/משרד אחר" בסוף המסמך)**: עד לאחרונה
+`<Assembly>` הכיל נתיב **מוחלט וקשיח** לתיקיית-הפיתוח הספציפית
+(`C:\Users\user1\Desktop\STARTARC_PROJECT\...\bin\Debug\...`) - זה מנע
+העברה למחשב/משרד אחר בלי עריכה ידנית. עכשיו זה נתיב-יחסי (שם-קובץ
+בלבד), נכון בכל מיקום שבו ה-DLL וה-`.addin` יושבים זה-לצד-זה.
 
 ## למה יש Post-Build Event
 
@@ -127,3 +133,40 @@ Event בזמן פיתוח.
    תפרט למה (למשל תיקייה שגויה, כמו שקרה לנו). אם אין אף אזכור של
    `PlumbingSystem` בכלל - Revit אפילו לא ראה את הקובץ, כנראה כי הוא
    בתיקייה שגויה או שלא בוצע restart אחרי ה-build.
+
+## תיקון בעיית ההפצה למחשב/משרד אחר
+
+**האבחון**: `PlumbingSystem.addin` הכיל נתיב-`<Assembly>` מוחלט וקשיח
+לתיקיית-הפיתוח האישית (`C:\Users\user1\Desktop\STARTARC_PROJECT\...`).
+העתקת תיקיית ה-Addins כמו-שהיא למחשב/משרד אחר הייתה נכשלת בשקט -
+בדיוק כמו התקלה עם `%ProgramData%` שתועדה למעלה - כי הנתיב פשוט לא
+היה קיים על המחשב האחר.
+
+**התיקון**: `<Assembly>` שונה לנתיב-**יחסי** - שם-הקובץ בלבד
+(`PlumbingSystem.Revit.dll`), בלי תיקיות. Revit תומך רשמית בנתיב יחסי
+למיקום קובץ ה-`.addin` עצמו. ה-Target `CopyAddinToRevit` (ראו למעלה)
+כבר מעתיק את ה-DLL, ה-PDB, וקובץ ה-`.addin` **לאותה תיקיית-יעד בדיוק**
+בכל build - כך שהנתיב היחסי תמיד נכון, בלי תלות בשם-משתמש/מבנה-תיקיות
+של מחשב הפיתוח. אומת (2026-09-01): clean build מאפס (מחיקת bin/obj),
+`.addin` שנוצר ונפרס תואם למקור, נתיב `PlumbingSystem.Revit.dll` בלבד
+(לא נתיב מוחלט), DLL+PDB+addin יושבים יחד באותה תיקייה עם timestamp
+זהה, ו-`dotnet test` עבר 62/62.
+
+**איך להעביר את התוסף למחשב אחר, בפועל**:
+
+1. להעתיק **שלושה קבצים בלבד** מתיקיית ה-Addins של מחשב-המקור
+   (`%AppData%\Autodesk\Revit\Addins\2027\`):
+   - `PlumbingSystem.Revit.dll`
+   - `PlumbingSystem.Revit.pdb` (אופציונלי - נדרש רק ל-Debug עם breakpoints)
+   - `PlumbingSystem.addin`
+2. להדביק את שלושתם יחד (**באותה תיקייה, זה-לצד-זה**) בתיקיית ה-Addins
+   המקבילה במחשב היעד - `%AppData%\Autodesk\Revit\Addins\2027\` (או
+   הגרסה המתאימה לגרסת ה-Revit המותקנת שם, אם שונה מ-2027).
+3. **אין צורך לערוך שום קובץ** - הנתיב היחסי נכון אוטומטית כל עוד
+   שלושת הקבצים יושבים יחד.
+4. מגבלה ידועה, לא-קשורה לנתיב: `PlumbingSystem.Revit.dll` עדיין
+   Build מסוג **Debug**, לא Release, ומתייחס ל-RevitAPI/RevitAPIUI של
+   Revit **2027** ספציפית (ראו ה-`HintPath` הקשיח ב-`PlumbingSystem.Revit.csproj`)
+   - מחשב-יעד עם גרסת Revit שונה עדיין ידרוש build מותאם, לא רק העתקת
+     קבצים. הפצה אמיתית לכמה משרדים/גרסאות-Revit שונות עדיין ממתינה
+     ל-Installer (MSI/EXE) נפרד - ראו ההערה למעלה על `Program Files`.

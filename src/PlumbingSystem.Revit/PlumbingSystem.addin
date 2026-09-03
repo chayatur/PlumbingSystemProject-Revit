@@ -6,11 +6,19 @@
   (ראו PlumbingSystem.Revit.csproj, Target "CopyAddinToRevit").
   AddInId קבוע לאורך זמן - לא להחליף אותו בין גרסאות, Revit מזהה
   את ה-Add-in לפיו (ולא לפי השם).
+
+  <Assembly> הוא נתיב-יחסי (לא מוחלט) בכוונה: Revit תומך רשמית בנתיב
+  יחסי למיקום קובץ ה-.addin עצמו, וה-Target "CopyAddinToRevit" כבר
+  מעתיק את ה-DLL ואת קובץ ה-.addin הזה לאותה תיקיית-יעד בדיוק - כך
+  שנתיב יחסי עובד גם בתיקיית %AppData% של מחשב הפיתוח וגם אם מעתיקים
+  את כל תיקיית ה-Addins (DLL + addin) למחשב אחר, בלי צורך לערוך את
+  הקובץ הזה. תוקן לאחר שאובחן (ראו docs/step2.md) נתיב-מוחלט-קשיח
+  לתיקיית-הפיתוח שמנע הפצה למחשב/משרד אחר.
 -->
 <RevitAddIns>
   <AddIn Type="Application">
     <Name>PlumbingSystem</Name>
-    <Assembly>C:\Users\user1\Desktop\STARTARC_PROJECT\src\PlumbingSystem.Revit\bin\Debug\net10.0-windows\PlumbingSystem.Revit.dll</Assembly>
+    <Assembly>PlumbingSystem.Revit.dll</Assembly>
     <AddInId>9968f457-9f00-41a5-abd2-c0b1e672b45c</AddInId>
     <FullClassName>PlumbingSystem.Revit.App</FullClassName>
     <VendorId>Startarc</VendorId>
