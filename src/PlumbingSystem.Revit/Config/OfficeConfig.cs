@@ -58,6 +58,33 @@ public static class OfficeConfig
     }
 
     /// <summary>
+    /// הערך **היחיד** שהמשרד מיפה למפתח הסטנדרטי <paramref name="standardKey"/>
+    /// (אחרי <c>Trim</c>), או <c>null</c> אם הקובץ / המפתח / הערך חסרים.
+    /// לשימוש עבור מפתחות **סקלריים** (קוטר, שיפוע וכו') - בניגוד ל-
+    /// <see cref="GetValues"/> שמיועד לרשימות (כמו שמות-סוגי-קיר).
+    /// </summary>
+    /// <exception cref="OfficeConfigException">
+    /// אם למפתח מופו **כמה** ערכים (רשימה מופרדת-פסיקים) - מפתח סקלרי
+    /// חייב להיות ערך יחיד, ופסיק בערך מספרי הוא כמעט תמיד מפריד-עשרוני
+    /// שגוי (יש להשתמש בנקודה: <c>1.75</c>, לא <c>1,75</c>).
+    /// </exception>
+    public static string? GetSingleValue(string standardKey)
+    {
+        ArgumentNullException.ThrowIfNull(standardKey);
+
+        IReadOnlyList<string> values = GetValues(standardKey);
+        if (values.Count <= 1)
+        {
+            return values.Count == 1 ? values[0] : null;
+        }
+
+        throw new OfficeConfigException(
+            $"ההגדרה '{standardKey.Trim()}' בקובץ ההגדרות המשרדי ({ConfigFileName}) " +
+            $"מכילה כמה ערכים מופרדים בפסיק ('{string.Join(", ", values)}') - " +
+            "היא חייבת להיות ערך יחיד. אם זה מספר עשרוני, השתמש בנקודה ולא בפסיק (למשל 1.75).");
+    }
+
+    /// <summary>
     /// הנתיב המלא לקובץ-ההגדרות שנעשה בו שימוש (או <c>null</c> אם לא
     /// ניתן לאתר אותו) - לצורך דיווח/אבחון בלבד.
     /// </summary>

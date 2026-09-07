@@ -8,7 +8,13 @@ using PlumbingSystem.Core.Domain;
 using PlumbingSystem.Core.Geometry;
 using PlumbingSystem.Core.Models;
 using PlumbingSystem.Revit.Config;
+using PlumbingSystem.Revit.Mep;
 using PlumbingSystem.Revit.Progress;
+
+// PIPE Step 5: alias בלבד (לא import של כל Autodesk.Revit.DB.Plumbing) -
+// אחרת Autodesk.Revit.DB.Plumbing.PipeSegment מתנגש עם ה-PipeSegment של Core
+// שכל הקובץ משתמש בו.
+using RevitPipe = Autodesk.Revit.DB.Plumbing.Pipe;
 
 namespace PlumbingSystem.Revit.Commands;
 
@@ -42,6 +48,16 @@ public class DrawPipesCommand : IExternalCommand
     /// באותו עיקרון כמו קוביית-הסימון של הקולטן (שלב 6) - "צר וארוך"
     /// לצורך בדיקה ויזואלית, לא רכיב MEP מדויק (ראו TODO ב-docs/step7.md).
     /// </summary>
+    /// <remarks>
+    /// **PIPE Step 3 - גבול מכוון**: הערך ההנדסי של הקוטר
+    /// (<c>PipeSegment.DiameterMm</c>, מה שיזין בעתיד <c>Pipe.Create</c>)
+    /// מגיע כבר מקובץ-ההגדרות המשרדי; חצי-הרוחב של **תיבת-התצוגה**
+    /// (DirectShape) עדיין נגזר מ-<see cref="PipeRouteCalculator.PipeDiameterMm"/>
+    /// (110) - Step 3 במפורש **לא** נוגע ב-visualization/DirectShape. אם
+    /// הקוטר בקובץ ישונה, המקטעים והדוח ישקפו זאת, אך גודל התיבה המצוירת
+    /// יישאר 110 מ"מ עד ששלב עתידי יחווט גם אותו. ראו
+    /// docs/pipe-step3-office-config-connected-to-routing.md.
+    /// </remarks>
     private static double HalfWidthFeet => UnitUtils.ConvertToInternalUnits(
         PipeRouteCalculator.PipeDiameterMm / 1000.0, UnitTypeId.Meters) / 2.0;
 
@@ -156,6 +172,75 @@ public class DrawPipesCommand : IExternalCommand
             scopeDescription += " except Floor 0 - commercial, always excluded";
         }
 
+        // PIPE Step 3: קוטר המקטע והשיפוע מגיעים מקובץ-ההגדרות המשרדי
+        // (PlumbingSystem.OfficeConfig.txt) דרך PipingOfficeSettings, לא
+        // מ-const. נטענים **פעם אחת** כאן ומועברים כמו-שהם ל-
+        // PipeRouteCalculator עבור **כל** מסלול (ישר/עוקף/Y-מדורג/גדמים).
+        // ערך חסר/לא-מספרי/לא-תקין בקובץ → OfficeConfigException עם הודעה
+        // מפורשת "איזו שורה לתקן" - **לא** fallback שקט ל-110/1.75. הטווח
+        // ההנדסי 1.5%-2.0% (חוק 2) עדיין נאכף בתוך PipeRouteCalculator עצמו.
+        // ראו docs/pipe-step3-office-config-connected-to-routing.md.
+        PipeRouteParameters routeParameters;
+        PipeDiameterRequirement diameterRequirement;
+        try
+        {
+            PipingOfficeSettings pipingSettings = PipingOfficeSettings.Load();
+            diameterRequirement = pipingSettings.SewerPipeDiameterRequirement;
+            routeParameters = new PipeRouteParameters
+            {
+                DiameterMm = pipingSettings.SewerPipeDiameterMm,
+                SlopePercent = pipingSettings.DefaultSlopePercent,
+            };
+        }
+        catch (OfficeConfigException ex)
+        {
+            message = ex.Message;
+            TaskDialog.Show("PlumbingSystem - ציור צינורות נכשל", ex.Message);
+            return Result.Failed;
+        }
+
+        // PIPE Step 5: שער מוכנות-מודל. מסלולים ישרים תקינים ייווצרו כ-Pipe
+        // אמיתי (RealPipeFactory) - לכן צריך PipingSystemType מסווג Sanitary
+        // ו-PipeType שכולל Segment שגודלו עומד בדרישת-הקוטר מהמשרד. אם לא -
+        // **אין יצירה כלל** (לא Pipe, לא DirectShape), Result.Failed, בלי
+        // fallback. הבדיקה רצה **פעם אחת** כאן, לפני ה-Transaction. ראו
+        // docs/pipe-step5-straight-routes-real-pipe.md.
+        PipeModelReadinessResult readiness = PipeModelReadinessInspector.Evaluate(doc, diameterRequirement);
+        if (!readiness.IsReady)
+        {
+            message = "המודל אינו יכול לספק צינור העומד בדרישת-הקוטר של המשרד - ראו הפירוט.";
+            TaskDialog.Show("PlumbingSystem - המודל אינו מוכן (Model Readiness)", readiness.Report);
+            return Result.Failed;
+        }
+
+        double realPipeDiameterMm = readiness.SelectedDiameterMm!.Value;
+
+        // מפת floorNumber → Level. ה-Level נדרש ל-Pipe.Create כ-Reference
+        // Level בלבד - **אינו** משנה גובה/שיפוע (אלה מ-StartPoint/EndPoint
+        // של ה-PipeSegment). fallback: Level של התצוגה הפעילה, ואז הנמוך.
+        Dictionary<int, Level> levelByFloor = new FilteredElementCollector(doc)
+            .OfClass(typeof(Level))
+            .Cast<Level>()
+            .Select(level => (Floor: RevitModelReader.TryGetFloorNumber(level), Level: level))
+            .Where(pair => pair.Floor is not null)
+            .GroupBy(pair => pair.Floor!.Value)
+            .ToDictionary(group => group.Key, group => group.OrderBy(pair => pair.Level.Elevation).First().Level);
+
+        Level? lowestLevel = new FilteredElementCollector(doc)
+            .OfClass(typeof(Level))
+            .Cast<Level>()
+            .OrderBy(level => level.Elevation)
+            .FirstOrDefault();
+
+        if (PipeModelReadinessInspector.FindSanitarySystemTypeId(doc, readiness.SanitarySystemTypeName) is not { } realPipeSystemTypeId
+            || PipeModelReadinessInspector.FindPipeTypeId(doc, readiness.MatchingPipeTypeName!) is not { } realPipeTypeId
+            || (activeLevel ?? lowestLevel) is not { } fallbackPipeLevel)
+        {
+            message = "בדיקת המוכנות עברה אך לא נמצאו PipeType / PipingSystemType / Level במסמך - מצב לא צפוי.";
+            TaskDialog.Show("PlumbingSystem - ציור צינורות נכשל", message);
+            return Result.Failed;
+        }
+
         var reader = new RevitModelReader(doc);
         var placementService = new CollectorPlacementService(doc);
         var wallRayCasting = new WallRayCasting(doc);
@@ -237,7 +322,7 @@ public class DrawPipesCommand : IExternalCommand
                         (IReadOnlyList<PipeSegment> routeSegments, bool isDetour, bool detourUnavailable,
                             bool requiresManualEngineering, ElementId? finalBlockingWallId,
                             WallEdgeSnapper.WallSegment? blockingWallGeometry) =
-                            BuildRoute(doc, wallRayCasting, fixture, snappedCollector);
+                            BuildRoute(doc, wallRayCasting, fixture, snappedCollector, routeParameters);
 
                         // אבחון-מלא (כל הניסיונות, לא רק "PASS/FAIL סופי") נאסף
                         // ב**מעבר שני**, נפרד - רק עבור מקטעים שכבר ידוע (מהמעבר
@@ -249,18 +334,46 @@ public class DrawPipesCommand : IExternalCommand
                         var diagnostics = new List<AttemptDiagnostic>();
                         if (requiresManualEngineering)
                         {
-                            BuildRoute(doc, wallRayCasting, fixture, snappedCollector, diagnostics);
+                            BuildRoute(doc, wallRayCasting, fixture, snappedCollector, routeParameters, diagnostics);
                         }
 
                         string routeId = PipeRouteCalculator.BuildRouteId(fixture, snappedCollector);
 
-                        DirectShape element;
-                        if (requiresManualEngineering)
+                        // PIPE Step 5: **מסלול ישר תקין בלבד** → Pipe אמיתי.
+                        // "תקין" = לא-manual, מקטע יחיד, **ובלי חסימת-קיר**
+                        // (BlockingWallId is null) - מסלול OBSTRUCTED לא עבר
+                        // את החסימה ואין לנו מסלול מאומת, אז הוא נשאר DirectShape.
+                        // הקלסיפיקציה משתמשת רק בשדות שכבר בפלט של BuildRoute -
+                        // שום חישוב-routing חדש.
+                        bool isCleanStraightRoute =
+                            !requiresManualEngineering
+                            && routeSegments.Count == 1
+                            && finalBlockingWallId is null;
+
+                        ElementId createdElementId;
+                        bool isRealPipe = false;
+                        double? realPipeReportDiameterMm = null;
+
+                        if (isCleanStraightRoute)
+                        {
+                            Level pipeLevel = levelByFloor.TryGetValue(apartment.FloorNumber, out Level? mapped)
+                                ? mapped
+                                : fallbackPipeLevel;
+
+                            RevitPipe realPipe = RealPipeFactory.Create(
+                                doc, realPipeSystemTypeId, realPipeTypeId, pipeLevel.Id,
+                                routeSegments[0], realPipeDiameterMm, routeId);
+
+                            createdElementId = realPipe.Id;
+                            isRealPipe = true;
+                            realPipeReportDiameterMm = realPipeDiameterMm;
+                        }
+                        else if (requiresManualEngineering)
                         {
                             // Material כתום, נוצר-פעם-אחת (ממש, לא בכל מקטע) ומוחל
                             // על כל גדמי "דורש פתרון ידני" באותה הרצה - ראו GetManualEngineeringMaterialId.
                             manualEngineeringMaterialId ??= GetManualEngineeringMaterialId(doc);
-                            element = CreatePipeElement(
+                            DirectShape manualElement = CreatePipeElement(
                                 doc, routeId, routeSegments, manualEngineeringMaterialId, activeView,
                                 orange: true, extendAtJoints: false);
 
@@ -269,13 +382,15 @@ public class DrawPipesCommand : IExternalCommand
                             // בקנה-מידה רגיל בלי Isolate; Text Note מוצג תמיד
                             // "מעל" בתצוגה, בלי תלות בגובה-חיתוך.
                             CreateManualEngineeringTextNote(doc, activeView, routeId, routeSegments);
+                            createdElementId = manualElement.Id;
                         }
                         else
                         {
-                            // Material כחול-בינוני, נוצר-פעם-אחת ומוחל על כל הצינורות
-                            // התקינים (ישר/עוקף/Y-מדורג) - ראו GetNormalPipeMaterialId.
+                            // DirectShape כחול לכל השאר: מסלול-עוקף (DETOUR / Y-מדורג),
+                            // וגם מסלול ישר שחסום (OBSTRUCTED) - ראו GetNormalPipeMaterialId.
                             normalPipeMaterialId ??= GetNormalPipeMaterialId(doc);
-                            element = CreatePipeElement(doc, routeId, routeSegments, normalPipeMaterialId, activeView, orange: false);
+                            createdElementId = CreatePipeElement(
+                                doc, routeId, routeSegments, normalPipeMaterialId, activeView, orange: false).Id;
                         }
 
                         drawnForApartment.Add(new DrawnPipe(
@@ -283,13 +398,15 @@ public class DrawPipesCommand : IExternalCommand
                             snappedCollector.Id,
                             routeId,
                             routeSegments,
-                            element.Id,
+                            createdElementId,
                             finalBlockingWallId,
                             isDetour,
                             detourUnavailable,
                             requiresManualEngineering,
                             diagnostics,
-                            blockingWallGeometry));
+                            blockingWallGeometry,
+                            isRealPipe,
+                            realPipeReportDiameterMm));
 
                         // דיווח-התקדמות: **אחרי** שהתוצאה האמיתית של המקטע
                         // הזה כבר ידועה במלואה (כולל האלמנט שכבר נוצר
@@ -429,7 +546,9 @@ public class DrawPipesCommand : IExternalCommand
         bool DetourUnavailable,
         bool RequiresManualEngineering,
         IReadOnlyList<AttemptDiagnostic> Diagnostics,
-        WallEdgeSnapper.WallSegment? BlockingWallGeometry);
+        WallEdgeSnapper.WallSegment? BlockingWallGeometry,
+        bool IsRealPipe,
+        double? RealPipeDiameterMm);
 
     /// <summary>
     /// תיעוד-אבחון של ניסיון-עקיפה **בודד** (אחד מתוך עד 28 שנוסים ב-
@@ -491,9 +610,10 @@ public class DrawPipesCommand : IExternalCommand
         WallRayCasting wallRayCasting,
         ToiletFixture fixture,
         CollectorPoint collector,
+        PipeRouteParameters routeParameters,
         List<AttemptDiagnostic>? diagnostics = null)
     {
-        PipeSegment straightSegment = PipeRouteCalculator.Calculate(fixture, collector);
+        PipeSegment straightSegment = PipeRouteCalculator.Calculate(fixture, collector, routeParameters);
         ElementId? blockingWallId = FindObstructingWall(doc, wallRayCasting, fixture, straightSegment);
 
         if (blockingWallId is null)
@@ -529,18 +649,18 @@ public class DrawPipesCommand : IExternalCommand
 
         // סבב 1: זווית-הפנייה נגזרת מ-D (הקו הישר) - ראו docs/step7.md.
         IReadOnlyList<PipeSegment>? attempt =
-            TryBuildDetour(doc, wallRayCasting, fixture, collector, wallSegment.Value, useOppositeSide: false, useWallDirectionAsReference: false, diagnostics, collectorWalls)
-            ?? TryBuildDetour(doc, wallRayCasting, fixture, collector, wallSegment.Value, useOppositeSide: true, useWallDirectionAsReference: false, diagnostics, collectorWalls)
-            ?? TryBuildStaggeredDetour(doc, wallRayCasting, fixture, collector, wallSegment.Value, useWallDirectionAsReference: false, diagnostics, collectorWalls)
+            TryBuildDetour(doc, wallRayCasting, fixture, collector, wallSegment.Value, routeParameters, useOppositeSide: false, useWallDirectionAsReference: false, diagnostics, collectorWalls)
+            ?? TryBuildDetour(doc, wallRayCasting, fixture, collector, wallSegment.Value, routeParameters, useOppositeSide: true, useWallDirectionAsReference: false, diagnostics, collectorWalls)
+            ?? TryBuildStaggeredDetour(doc, wallRayCasting, fixture, collector, wallSegment.Value, routeParameters, useWallDirectionAsReference: false, diagnostics, collectorWalls)
             // סבב 2: זווית-הפנייה נגזרת מכיוון **הקיר החוסם עצמו** - לא
             // שאלת-כיוונון-קודמת, שאלה חדשה (ראו התיעוד ב-
             // PipeRouteCalculator.ComputeBendDirections). ייתכן שהבנייה
             // הזו תיכשל (גיאומטרית - "אחורה") ליותר גיאומטריות מהגרסה
             // המבוססת-D, כי U1/U2 לא בהכרח קרובים לכיוון-ההתקדמות - זה
             // מטופל כבר (try/catch) בדיוק כמו כל ניסיון אחר.
-            ?? TryBuildDetour(doc, wallRayCasting, fixture, collector, wallSegment.Value, useOppositeSide: false, useWallDirectionAsReference: true, diagnostics, collectorWalls)
-            ?? TryBuildDetour(doc, wallRayCasting, fixture, collector, wallSegment.Value, useOppositeSide: true, useWallDirectionAsReference: true, diagnostics, collectorWalls)
-            ?? TryBuildStaggeredDetour(doc, wallRayCasting, fixture, collector, wallSegment.Value, useWallDirectionAsReference: true, diagnostics, collectorWalls);
+            ?? TryBuildDetour(doc, wallRayCasting, fixture, collector, wallSegment.Value, routeParameters, useOppositeSide: false, useWallDirectionAsReference: true, diagnostics, collectorWalls)
+            ?? TryBuildDetour(doc, wallRayCasting, fixture, collector, wallSegment.Value, routeParameters, useOppositeSide: true, useWallDirectionAsReference: true, diagnostics, collectorWalls)
+            ?? TryBuildStaggeredDetour(doc, wallRayCasting, fixture, collector, wallSegment.Value, routeParameters, useWallDirectionAsReference: true, diagnostics, collectorWalls);
 
         if (attempt is not null)
         {
@@ -552,7 +672,7 @@ public class DrawPipesCommand : IExternalCommand
         // גיאומטרית אמיתית, לא באג. **לא** מציירים קו-מלא-חוצה-קיר
         // (נראה כמו טעות) - שני גדמים קצרים, לא-מחוברים, מסמנים בבירור
         // "כאן יש פער שדורש החלטת-מהנדס" - ראו BuildManualEngineeringStubs, docs/step7.md.
-        IReadOnlyList<PipeSegment> stubs = BuildManualEngineeringStubs(fixture, collector);
+        IReadOnlyList<PipeSegment> stubs = BuildManualEngineeringStubs(fixture, collector, routeParameters);
         return (stubs, false, false, true, blockingWallId, wallSegment);
     }
 
@@ -565,7 +685,7 @@ public class DrawPipesCommand : IExternalCommand
     /// בבירור, בעין, שיש כאן פער שטרם נפתר, לא צינור-גמור.
     /// </summary>
     private static IReadOnlyList<PipeSegment> BuildManualEngineeringStubs(
-        ToiletFixture fixture, CollectorPoint collector)
+        ToiletFixture fixture, CollectorPoint collector, PipeRouteParameters routeParameters)
     {
         double totalDistance = GeometryUtils.Distance2D(fixture.Location, collector.Location);
         double stubLength = Math.Min(ManualEngineeringStubLengthMeters, totalDistance / 2.0);
@@ -592,14 +712,14 @@ public class DrawPipesCommand : IExternalCommand
             id: $"{routeId}-manual-stub-fixture",
             startPoint: fixture.Location,
             endPoint: fixtureStubEnd,
-            diameterMm: PipeRouteCalculator.PipeDiameterMm,
+            diameterMm: routeParameters.DiameterMm,
             slopePercent: 0);
 
         var stubFromCollector = new PipeSegment(
             id: $"{routeId}-manual-stub-collector",
             startPoint: collector.Location,
             endPoint: collectorStubEnd,
-            diameterMm: PipeRouteCalculator.PipeDiameterMm,
+            diameterMm: routeParameters.DiameterMm,
             slopePercent: 0);
 
         return new[] { stubFromFixture, stubFromCollector };
@@ -720,6 +840,7 @@ public class DrawPipesCommand : IExternalCommand
     /// <param name="fixture">האסלה.</param>
     /// <param name="collector">הקולטן.</param>
     /// <param name="wallSegment">הקיר החוסם (גיאומטריה טהורה).</param>
+    /// <param name="routeParameters">קוטר/שיפוע מקובץ-ההגדרות המשרדי (PIPE Step 3) - מועבר כמו-שהוא ל-<see cref="PipeRouteCalculator.CalculateStaggeredDetour"/>.</param>
     /// <param name="useWallDirectionAsReference">מועבר כמו-שהוא ל-<see cref="PipeRouteCalculator.CalculateStaggeredDetour"/>.</param>
     /// <param name="diagnostics">
     /// אם ניתנה (לא <c>null</c>) - כל אחד מ-12 הצירופים (6 אורכי-ביניים
@@ -740,6 +861,7 @@ public class DrawPipesCommand : IExternalCommand
         ToiletFixture fixture,
         CollectorPoint collector,
         WallEdgeSnapper.WallSegment wallSegment,
+        PipeRouteParameters routeParameters,
         bool useWallDirectionAsReference,
         List<AttemptDiagnostic>? diagnostics = null,
         CollectorWallPenetration? collectorWalls = null)
@@ -759,7 +881,7 @@ public class DrawPipesCommand : IExternalCommand
                 try
                 {
                     segments = PipeRouteCalculator.CalculateStaggeredDetour(
-                        fixture, collector, wallSegment, crossoverLengthMeters, useOppositeSide, useWallDirectionAsReference);
+                        fixture, collector, wallSegment, crossoverLengthMeters, useOppositeSide, useWallDirectionAsReference, routeParameters);
                 }
                 catch (InvalidOperationException ex)
                 {
@@ -799,6 +921,7 @@ public class DrawPipesCommand : IExternalCommand
     /// <param name="fixture">האסלה.</param>
     /// <param name="collector">הקולטן.</param>
     /// <param name="wallSegment">הקיר החוסם (גיאומטריה טהורה).</param>
+    /// <param name="routeParameters">קוטר/שיפוע מקובץ-ההגדרות המשרדי (PIPE Step 3) - מועבר כמו-שהוא ל-<see cref="PipeRouteCalculator.CalculateDetour"/>.</param>
     /// <param name="useOppositeSide">מועבר כמו-שהוא ל-<see cref="PipeRouteCalculator.CalculateDetour"/>.</param>
     /// <param name="useWallDirectionAsReference">מועבר כמו-שהוא ל-<see cref="PipeRouteCalculator.CalculateDetour"/>.</param>
     /// <param name="diagnostics">
@@ -812,6 +935,7 @@ public class DrawPipesCommand : IExternalCommand
         ToiletFixture fixture,
         CollectorPoint collector,
         WallEdgeSnapper.WallSegment wallSegment,
+        PipeRouteParameters routeParameters,
         bool useOppositeSide,
         bool useWallDirectionAsReference,
         List<AttemptDiagnostic>? diagnostics = null,
@@ -827,7 +951,7 @@ public class DrawPipesCommand : IExternalCommand
         try
         {
             segments = PipeRouteCalculator.CalculateDetour(
-                fixture, collector, wallSegment, useOppositeSide, useWallDirectionAsReference);
+                fixture, collector, wallSegment, useOppositeSide, useWallDirectionAsReference, routeParameters);
         }
         catch (InvalidOperationException ex)
         {
@@ -1398,18 +1522,23 @@ public class DrawPipesCommand : IExternalCommand
     /// <summary>
     /// מוחקת מהמודל את כל אלמנטי-המסלול שנוצרו בהרצות קודמות - אותו
     /// עיקרון בדיוק כמו <see cref="CollectorPlacementService.DeleteExistingCollectors"/>
-    /// (זיהוי לפי קטגוריית Generic Model + Comments/Mark/Name שמתחיל
-    /// ב-<see cref="PipeRouteCalculator.PipeIdPrefix"/> - קידומת **שונה**
-    /// מ-<see cref="CollectorLocator.CollectorIdPrefix"/>, כך שהמחיקה
-    /// הזו לא נוגעת בקולטנים, ולהפך).
+    /// (זיהוי לפי Comments/Mark/Name שמתחיל ב-<see cref="PipeRouteCalculator.PipeIdPrefix"/> -
+    /// קידומת **שונה** מ-<see cref="CollectorLocator.CollectorIdPrefix"/>, כך
+    /// שהמחיקה הזו לא נוגעת בקולטנים, ולהפך).
     /// </summary>
+    /// <remarks>
+    /// **PIPE Step 5**: סורקת שתי קטגוריות - <c>OST_GenericModel</c>
+    /// (DirectShape - מסלולי עוקף / OBSTRUCTED / MANUAL / הרצות ישנות)
+    /// **וגם** <c>OST_PipeCurves</c> (Pipe אמיתי - מסלולים ישרים תקינים
+    /// מ-Step 5). כך הרצה חוזרת של "צייר צינורות" מנקה את שני הסוגים ואין
+    /// כפילויות. Fittings אינם נוצרים עדיין ולכן <c>OST_PipeFitting</c>
+    /// אינו נסרק.
+    /// </remarks>
     private static int DeleteExistingPipes(Document doc)
     {
-        List<ElementId> existingPipeIds = new FilteredElementCollector(doc)
-            .OfCategory(BuiltInCategory.OST_GenericModel)
-            .WhereElementIsNotElementType()
-            .Where(IsExistingPipe)
-            .Select(element => element.Id)
+        List<ElementId> existingPipeIds = CollectExistingPipeIds(doc, BuiltInCategory.OST_GenericModel)
+            .Concat(CollectExistingPipeIds(doc, BuiltInCategory.OST_PipeCurves))
+            .Distinct()
             .ToList();
 
         if (existingPipeIds.Count > 0)
@@ -1420,11 +1549,22 @@ public class DrawPipesCommand : IExternalCommand
         return existingPipeIds.Count;
     }
 
+    private static IEnumerable<ElementId> CollectExistingPipeIds(Document doc, BuiltInCategory category) =>
+        new FilteredElementCollector(doc)
+            .OfCategory(category)
+            .WhereElementIsNotElementType()
+            .Where(IsExistingPipe)
+            .Select(element => element.Id)
+            .ToList();
+
     private static bool IsExistingPipe(Element element)
     {
         string? comments = element.get_Parameter(BuiltInParameter.ALL_MODEL_INSTANCE_COMMENTS)?.AsString();
         string? mark = element.get_Parameter(BuiltInParameter.ALL_MODEL_MARK)?.AsString();
 
+        // Comments/Mark בקידומת "PIPE-" - המזהה שעובד גם ל-DirectShape וגם
+        // ל-Pipe אמיתי (PIPE Step 5). ה-Name-prefix הוא בונוס ל-DirectShape
+        // ישן בלבד (ל-Pipe אמיתי ה-Name הוא שם ה-PipeType, לא ניתן-לשינוי).
         return (comments?.StartsWith(PipeRouteCalculator.PipeIdPrefix, StringComparison.Ordinal) ?? false)
             || (mark?.StartsWith(PipeRouteCalculator.PipeIdPrefix, StringComparison.Ordinal) ?? false)
             || element.Name.StartsWith(PipeElementNamePrefix, StringComparison.Ordinal);
@@ -1483,6 +1623,16 @@ public class DrawPipesCommand : IExternalCommand
     }
 
     /// <summary>
+    /// הקוטר (מ"מ) של המסלול הזה **בפועל**, נקרא מהמקטע הראשון שנוצר -
+    /// לא <c>const</c>. PIPE Step 3: הקוטר מגיע מקובץ-ההגדרות המשרדי
+    /// (<see cref="PipingOfficeSettings"/>), אז הדוח חייב לדווח את הערך
+    /// שבו נעשה שימוש בפועל, לא ערך קשיח. כל מקטעי-המסלול חולקים אותו
+    /// קוטר (<c>routeParameters.DiameterMm</c>), אז המקטע הראשון מספיק.
+    /// </summary>
+    private static double RouteDiameterMm(DrawnPipe pipe) =>
+        pipe.Segments.Count > 0 ? pipe.Segments[0].DiameterMm : 0.0;
+
+    /// <summary>
     /// כותבת את שורות-הדוח למקטע <c>RequiresManualEngineering</c> -
     /// **נפרד** מהבלוק הרגיל (לא בלוק-ולידציה-שיפוע/זווית, כי הגדמים
     /// אינם מקטעי-צנרת הנדסיים אמיתיים, רק סמני-אבחון) - מציג את שני
@@ -1498,10 +1648,11 @@ public class DrawPipesCommand : IExternalCommand
             CultureInfo.InvariantCulture,
             "  Pipe RouteId={0}  RevitElementId={1}  Kind=MANUAL STUBS (2 disconnected markers, orange, {2:F0}cm each - not a real pipe)",
             pipe.RouteId, pipe.RevitElementId.Value, ManualEngineeringStubLengthMeters * 100.0));
+        sb.AppendLine("    Element: DirectShape (OST_GenericModel, manual stubs)");
         sb.AppendLine(string.Format(
             CultureInfo.InvariantCulture,
             "    FixtureElementId={0}  CollectorId={1}  DiameterMm={2:F0}  obstruction={3}",
-            pipe.FixtureId, pipe.CollectorId, PipeRouteCalculator.PipeDiameterMm, obstructionStatus));
+            pipe.FixtureId, pipe.CollectorId, RouteDiameterMm(pipe), obstructionStatus));
         sb.AppendLine(string.Format(
             CultureInfo.InvariantCulture,
             "    Actual Material(s) on this element (verified via GetMaterialIds, not assumed): {0}",
@@ -1694,6 +1845,7 @@ public class DrawPipesCommand : IExternalCommand
         int detourCount = allPipes.Count(p => p.IsDetour);
         int manualRequiredCount = allPipes.Count(p => p.RequiresManualEngineering);
         int obstructedCount = allPipes.Count(p => p.BlockingWallId is not null);
+        int realPipeCount = allPipes.Count(p => p.IsRealPipe);
 
         var sb = new StringBuilder();
         sb.AppendLine("=== PlumbingSystem - Pipes Drawn in Revit ===");
@@ -1704,6 +1856,10 @@ public class DrawPipesCommand : IExternalCommand
             CultureInfo.InvariantCulture,
             "Total pipe routes created: {0} (detour routes: {1}, manual engineering required: {2}, obstructed: {3}).",
             allPipes.Count, detourCount, manualRequiredCount, obstructedCount));
+        sb.AppendLine(string.Format(
+            CultureInfo.InvariantCulture,
+            "Element types: {0} real Revit Pipe(s) (OST_PipeCurves, clean straight routes), {1} DirectShape(s) (OST_GenericModel, everything else). PIPE Step 5.",
+            realPipeCount, allPipes.Count - realPipeCount));
         sb.AppendLine($"Apartments processed: {apartments.Count}");
 
         if (readerWarnings.Count > 0)
@@ -1747,10 +1903,13 @@ public class DrawPipesCommand : IExternalCommand
                     CultureInfo.InvariantCulture,
                     "  Pipe RouteId={0}  RevitElementId={1}  Kind={2}",
                     pipe.RouteId, pipe.RevitElementId.Value, routeKind));
+                sb.AppendLine(pipe.IsRealPipe
+                    ? "    Element: Pipe (OST_PipeCurves)"
+                    : "    Element: DirectShape (OST_GenericModel)");
                 sb.AppendLine(string.Format(
                     CultureInfo.InvariantCulture,
                     "    FixtureElementId={0}  CollectorId={1}  DiameterMm={2:F0}  obstruction={3}",
-                    pipe.FixtureId, pipe.CollectorId, PipeRouteCalculator.PipeDiameterMm, obstructionStatus));
+                    pipe.FixtureId, pipe.CollectorId, pipe.RealPipeDiameterMm ?? RouteDiameterMm(pipe), obstructionStatus));
                 sb.AppendLine(string.Format(
                     CultureInfo.InvariantCulture,
                     "    Actual Material(s) on this element (verified via GetMaterialIds, not assumed): {0}",

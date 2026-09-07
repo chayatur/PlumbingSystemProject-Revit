@@ -408,6 +408,86 @@ public class PipeRouteCalculatorTests
             fixture, null!, blockingWall, crossoverLengthMeters: 0.5));
     }
 
+    // --- PIPE Step 3: קוטר/שיפוע מגיעים מ-PipeRouteParameters (מוזן על ידי
+    // שכבת-Revit מקובץ-ההגדרות המשרדי), לא מ-const. הבדיקות מוודאות
+    // שהערך שמועבר **באמת** מגיע ל-PipeSegment, ושברירת-המחדל (ללא פרמטר)
+    // עדיין נותנת 110 / 1.75. ראו docs/pipe-step3-office-config-connected-to-routing.md. ---
+
+    [Fact]
+    public void Calculate_WithoutParameters_UsesHistoricalDefaults()
+    {
+        var fixture = new ToiletFixture("toilet-1", new Point3D(0, 0, 10), "apt-1", isGuestBathroom: true);
+        var collector = new CollectorPoint("COL-toilet-1", new Point3D(3, 4, 10), new List<string> { "apt-1" });
+
+        PipeSegment segment = PipeRouteCalculator.Calculate(fixture, collector);
+
+        Assert.Equal(110.0, segment.DiameterMm);
+        Assert.Equal(1.75, segment.SlopePercent, precision: 6);
+    }
+
+    [Fact]
+    public void Calculate_WithConfiguredParameters_SegmentUsesThemNotHardcoded110And175()
+    {
+        var fixture = new ToiletFixture("toilet-1", new Point3D(0, 0, 10), "apt-1", isGuestBathroom: true);
+        var collector = new CollectorPoint("COL-toilet-1", new Point3D(3, 4, 10), new List<string> { "apt-1" });
+        var parameters = new PipeRouteParameters { DiameterMm = 100.0, SlopePercent = 2.0 };
+
+        PipeSegment segment = PipeRouteCalculator.Calculate(fixture, collector, parameters);
+
+        // מרחק אופקי = 5. שיפוע 2.0% → ירידת-Z של 0.1 מ'.
+        Assert.Equal(100.0, segment.DiameterMm);
+        Assert.Equal(2.0, segment.SlopePercent, precision: 6);
+        Assert.Equal(10.0 - (5.0 * 0.02), segment.EndPoint.Z, precision: 9);
+    }
+
+    [Fact]
+    public void Calculate_ConfiguredSlopeOutsideLaw2Range_StillThrows_EngineeringRangeNotBypassed()
+    {
+        var fixture = new ToiletFixture("toilet-1", new Point3D(0, 0, 10), "apt-1", isGuestBathroom: true);
+        var collector = new CollectorPoint("COL-toilet-1", new Point3D(3, 4, 10), new List<string> { "apt-1" });
+        var parameters = new PipeRouteParameters { DiameterMm = 110.0, SlopePercent = 3.0 };
+
+        // 3.0% > MaxSlopePercent (2.0) - חוק 2 עדיין נאכף ב-Calculate עצמו,
+        // לא נעקף רק כי הערך הגיע מ"קונפיגורציה".
+        Assert.Throws<InvalidOperationException>(
+            () => PipeRouteCalculator.Calculate(fixture, collector, parameters));
+    }
+
+    [Fact]
+    public void CalculateDetour_WithConfiguredParameters_BothLegsUseThem()
+    {
+        var fixture = new ToiletFixture("toilet-1", new Point3D(0, 0, 10), "apt-1", isGuestBathroom: true);
+        var collector = new CollectorPoint("COL-toilet-1", new Point3D(2.5, 0, 10), new List<string> { "apt-1" });
+        var blockingWall = new WallEdgeSnapper.WallSegment(
+            "wall-1", new Point3D(1.25, 0.5, 0), new Point3D(1.25, 5, 0));
+        var parameters = new PipeRouteParameters { DiameterMm = 100.0, SlopePercent = 2.0 };
+
+        IReadOnlyList<PipeSegment> route = PipeRouteCalculator.CalculateDetour(
+            fixture, collector, blockingWall, useOppositeSide: false, useWallDirectionAsReference: false, parameters);
+
+        Assert.Equal(2, route.Count);
+        Assert.All(route, seg => Assert.Equal(100.0, seg.DiameterMm));
+        Assert.All(route, seg => Assert.Equal(2.0, seg.SlopePercent, precision: 6));
+    }
+
+    [Fact]
+    public void CalculateStaggeredDetour_WithConfiguredParameters_AllThreeSegmentsUseThem()
+    {
+        var fixture = new ToiletFixture("toilet-1", new Point3D(0, 0, 10), "apt-1", isGuestBathroom: true);
+        var collector = new CollectorPoint("COL-toilet-1", new Point3D(2.5, 0, 10), new List<string> { "apt-1" });
+        var blockingWall = new WallEdgeSnapper.WallSegment(
+            "wall-1", new Point3D(1.5, 0.5, 0), new Point3D(1.5, 5, 0));
+        var parameters = new PipeRouteParameters { DiameterMm = 100.0, SlopePercent = 2.0 };
+
+        IReadOnlyList<PipeSegment> route = PipeRouteCalculator.CalculateStaggeredDetour(
+            fixture, collector, blockingWall, crossoverLengthMeters: 0.5,
+            useOppositeSide: false, useWallDirectionAsReference: false, parameters: parameters);
+
+        Assert.Equal(3, route.Count);
+        Assert.All(route, seg => Assert.Equal(100.0, seg.DiameterMm));
+        Assert.All(route, seg => Assert.Equal(2.0, seg.SlopePercent, precision: 6));
+    }
+
     /// <summary>זווית (מעלות) בין כיווני שני מקטעים עוקבים - עוזר-בדיקה בלבד.</summary>
     private static double AngleBetweenDegrees(PipeSegment first, PipeSegment second)
     {

@@ -1,10 +1,17 @@
 # חקירה: מעבר מ-DirectShape ל-Pipe אמיתי (Revit MEP)
 
-**סטטוס: חקירה בלבד - שום שינוי-קוד לא בוצע. אין החלטה סופית, ואין מימוש בפועל.**
+> **הערת-סטטוס (עודכן)**: זהו **מסמך-חקירה היסטורי** - נכתב לפני שהמימוש
+> התחיל. חלקים ממנו כבר לא משקפים את המצב:
+> - **PIPE Step 3** ([pipe-step3-*.md](pipe-step3-office-config-connected-to-routing.md)) - הקוטר/שיפוע כבר מגיעים מקובץ-ההגדרות המשרדי, לא מ-`const`.
+> - **PIPE Step 4** ([pipe-step4-*.md](pipe-step4-revit-pipe-creation.md)) - `PipeModelReadiness` + `CreateTestPipeCommand` (הוכחת `Pipe.Create` מבודדת) מומשו.
+> - **PIPE Step 4.1** ([pipe-step4-1-*.md](pipe-step4-1-diameter-requirements.md)) - דרישת-קוטר מדויק **או טווח**, בחירת הגודל הקיים הקטן ביותר.
+> - **PIPE Step 5** ([pipe-step5-*.md](pipe-step5-straight-routes-real-pipe.md)) - מסלולים ישרים תקינים נוצרים כ-`Pipe` אמיתי; השאר נשאר DirectShape.
+>
+> הסעיפים שעדיין תקפים ושימושיים: **§5** (מיפוי חוקי-יצירת-הצינור),
+> **§6** (מה חדש - בעיקר Fittings), **§8** (החלטות פתוחות - לוגיקת-זווית ל-Fitting טרם הוכרעה).
 
 מסמך זה מתעד את הממצאים וההחלטות-הפתוחות שהצטברו בחקירת המעבר מ-`DirectShape`
-(המימוש הנוכחי, שלב 7) לצינור `Pipe` אמיתי של Revit MEP. הוא מתעדכן בהמשך
-החקירה - לא מסמך "סגור".
+(המימוש הנוכחי, שלב 7) לצינור `Pipe` אמיתי של Revit MEP.
 
 ## 1. הדרישה של STARTARC (לא הנחה על המודל)
 

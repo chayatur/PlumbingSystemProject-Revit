@@ -109,7 +109,14 @@ public static class ElementRelationshipLookup
             return new RelationshipInfo(SelectedKind.Collector, selectedId, selectedId, collectorMark, pipes);
         }
 
-        if (selectedName.StartsWith(PipeNamePrefix, StringComparison.Ordinal))
+        // DirectShape: Name בקידומת "PlumbingSystem Pipe ". PIPE Step 5:
+        // Pipe אמיתי (OST_PipeCurves) - ה-Name הוא שם ה-PipeType, לכן זיהוי
+        // לפי Mark/Comments בקידומת "PIPE-".
+        bool selectedIsRealPipe =
+            selected.Category?.Id.Value == (long)BuiltInCategory.OST_PipeCurves
+            && HasPipeRouteMark(selected);
+
+        if (selectedName.StartsWith(PipeNamePrefix, StringComparison.Ordinal) || selectedIsRealPipe)
         {
             ConnectedPipe? selfPipe = ParsePipe(selected);
             if (selfPipe is null)
@@ -140,21 +147,51 @@ public static class ElementRelationshipLookup
     /// <summary>
     /// כל הצינורות במסמך, מפוענחים **בזול** בלבד (בלי חיפוש-אסלה/Room -
     /// ראו <see cref="Enrich"/>) - נקראת פעם אחת לכל שאילתה, לפני סינון.
+    /// PIPE Step 5: שתי קטגוריות - DirectShape (Generic Model, זיהוי לפי
+    /// Name) וגם Pipe אמיתי (Pipe Curves, זיהוי לפי Mark/Comments "PIPE-").
     /// </summary>
     private static IEnumerable<ConnectedPipe> AllPipes(Document doc)
     {
-        return new FilteredElementCollector(doc)
+        IEnumerable<Element> directShapePipes = new FilteredElementCollector(doc)
             .OfCategory(BuiltInCategory.OST_GenericModel)
             .WhereElementIsNotElementType()
-            .Where(e => e.Name is not null && e.Name.StartsWith(PipeNamePrefix, StringComparison.Ordinal))
+            .Where(e => e.Name is not null && e.Name.StartsWith(PipeNamePrefix, StringComparison.Ordinal));
+
+        IEnumerable<Element> realPipes = new FilteredElementCollector(doc)
+            .OfCategory(BuiltInCategory.OST_PipeCurves)
+            .WhereElementIsNotElementType()
+            .Where(HasPipeRouteMark);
+
+        return directShapePipes
+            .Concat(realPipes)
             .Select(ParsePipe)
             .Where(p => p is not null)
             .Select(p => p!);
     }
 
+    /// <summary>
+    /// <c>true</c> אם ל-<paramref name="element"/> יש <c>Mark</c> או
+    /// <c>Comments</c> בקידומת <c>"PIPE-"</c> - המזהה של צינור STARTARC
+    /// שעובד גם ל-DirectShape וגם ל-Pipe אמיתי (PIPE Step 5).
+    /// </summary>
+    private static bool HasPipeRouteMark(Element element)
+    {
+        string? mark = element.get_Parameter(BuiltInParameter.ALL_MODEL_MARK)?.AsString();
+        string? comments = element.get_Parameter(BuiltInParameter.ALL_MODEL_INSTANCE_COMMENTS)?.AsString();
+        return (mark?.StartsWith(PipeIdPrefix, StringComparison.Ordinal) ?? false)
+            || (comments?.StartsWith(PipeIdPrefix, StringComparison.Ordinal) ?? false);
+    }
+
     private static ConnectedPipe? ParsePipe(Element element)
     {
+        // Mark הוא המקור הראשי (גם DirectShape וגם Pipe אמיתי מקבלים אותו);
+        // אם חסר/לא-תואם, נופלים ל-Comments (PIPE Step 5, גיבוי).
         string? routeId = element.get_Parameter(BuiltInParameter.ALL_MODEL_MARK)?.AsString();
+        if (string.IsNullOrEmpty(routeId) || !routeId.StartsWith(PipeIdPrefix, StringComparison.Ordinal))
+        {
+            routeId = element.get_Parameter(BuiltInParameter.ALL_MODEL_INSTANCE_COMMENTS)?.AsString();
+        }
+
         if (string.IsNullOrEmpty(routeId) || !routeId.StartsWith(PipeIdPrefix, StringComparison.Ordinal))
         {
             return null;

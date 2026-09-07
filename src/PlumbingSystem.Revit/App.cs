@@ -138,6 +138,16 @@ public class App : IExternalApplication
             assemblyPath,
             typeof(DiscoverCollectorWallsCommand).FullName);
 
+        // כפתור ניסוי **זמני** (PIPE Step 4) - יוצר Pipe אמיתי בודד
+        // (Pipe.Create) בקוטר מקובץ-ההגדרות המשרדי, אחרי בדיקת מוכנות-מודל.
+        // הוכחת-API מבודדת בלבד - לא נוגע ב-DrawPipesCommand / DirectShape /
+        // routing. ראו CreateTestPipeCommand, docs/pipe-step4-revit-pipe-creation.md.
+        var createTestPipeButtonData = new PushButtonData(
+            "CreateTestPipeCommand",
+            "צינור-ניסוי (Step 4)",
+            assemblyPath,
+            typeof(CreateTestPipeCommand).FullName);
+
         panel.AddItem(readElementsButtonData);
         panel.AddItem(discoverModelButtonData);
         panel.AddItem(buildDomainModelButtonData);
@@ -149,6 +159,7 @@ public class App : IExternalApplication
         panel.AddItem(discoverPipingTypesButtonData);
         panel.AddItem(discoverFixtureSignatureButtonData);
         panel.AddItem(discoverCollectorWallsButtonData);
+        panel.AddItem(createTestPipeButtonData);
 
         // "Connection Inspector" - פאנל-מעוגן (לא כפתור-ריבון): Revit
         // מוסיף אותו אוטומטית ל-View → User Interface. חייב להירשם כאן,

@@ -1,18 +1,24 @@
 # PlumbingSystem - Office Configuration
 #
 # Maps STANDARD KEYS (defined by the software) to the values that exist in
-# THIS office's / project's Revit model. The routing logic never contains
-# project-specific element names - it asks for the standard key, and the
+# THIS office's / project's Revit model, plus the office's STARTARC piping
+# defaults. The routing logic never contains project-specific element names
+# or hard-coded engineering numbers - it asks for the standard key, and the
 # office adapts the value here.
 #
 # Same philosophy as the "Is_Toilet" Shared Parameter: the software fixes a
 # standard name, the office adapts it to their model. Here it is a config file.
+#
+# HOW TO EDIT: open this file in any plain text editor (Notepad, VS Code, ...),
+# change the values after the '=' sign, save. No Visual Studio, no source code,
+# no rebuild is required. The add-in reads this file when it runs.
 #
 # Format:
 #   Key = Value            (one entry per line)
 #   Key = Value1, Value2    (comma-separated list for multiple values)
 #   # ...                   (lines starting with '#' are comments; blank lines ignored)
 #   Encoding: UTF-8
+#   Numbers: use a period as the decimal separator (1.75), never a comma (1,75).
 #
 # ---------------------------------------------------------------------------
 
@@ -21,3 +27,34 @@
 # here is treated as non-concrete (crossable). If this key is missing/empty,
 # no wall type is treated as concrete (business rule: non-concrete => allowed).
 Concrete wall = קיר בטון 20
+
+# ---------------------------------------------------------------------------
+# STARTARC sewer-pipe engineering defaults.
+#
+# These are CONFIG DATA, not hard-coded constants. A missing or invalid value
+# produces a clear error naming this file and the line to fix - there is NO
+# silent fallback to a different diameter or slope, NO rounding to the nearest
+# size, and NO auto-creation of a size. Fix the value here and run again.
+# ---------------------------------------------------------------------------
+
+# Sewer-pipe diameter REQUIREMENT, in millimetres. Two forms are accepted:
+#
+#   Exact:   Sewer pipe diameter mm = 101.6
+#            -> the model must contain a pipe size of exactly 101.6 mm
+#               (a tiny floating-point tolerance only; NOT an engineering band).
+#
+#   Range:   Sewer pipe diameter mm = 100-110
+#            -> any existing pipe size with 100 <= size <= 110 satisfies it.
+#               If several sizes are in range, the SMALLEST one is chosen.
+#
+# Notes:
+#   - Use a period as the decimal separator (101.6), never a comma.
+#   - Use a hyphen for a range (100-110), min first.
+#   - The number compared is the Revit API's nominal diameter converted to mm
+#     (e.g. Nominal 4" is compared as 101.6 mm), not the text Revit shows.
+#   - 110 (exact) is the historical STARTARC value and still works as-is.
+Sewer pipe diameter mm = 100-110
+
+# Default pipe slope, in percent. Must be a positive number below 100.
+# 1.75% is the midpoint of the approved 1.5%-2.0% range.
+Default slope percent = 1.75

@@ -58,18 +58,35 @@
     <RevitAddinsDir>$(AppData)\Autodesk\Revit\Addins\2027\</RevitAddinsDir>
   </PropertyGroup>
 
-  <!-- מעתיק את ה-DLL (וה-PDB אם קיים) ואת ה-manifest לתיקיית ה-Add-ins של
-       Revit אחרי כל build, כדי שלא יהיה צורך להעתיק ידנית בכל פעם ולוודא
-       ש-Revit תמיד רואה את הגרסה העדכנית ביותר. -->
+  <!-- מעתיק את פלט ה-build (וה-manifest) לתיקיית ה-Add-ins של Revit אחרי כל
+       build, כדי שלא יהיה צורך להעתיק ידנית בכל פעם ו-Revit תמיד יראה את
+       הגרסה העדכנית ביותר.
+
+       חשוב: מעתיק את **כל** ה-DLL/PDB מ-$(TargetDir), לא רק
+       $(AssemblyName).dll - כלומר גם PlumbingSystem.Core.dll (וכל תלות
+       עתידית). אחרת Revit טוען PlumbingSystem.Revit.dll חדש לצד
+       PlumbingSystem.Core.dll ישן שנשאר מ-build קודם, ונופל עם
+       "Could not load type 'PlumbingSystem.Core.Domain.<טיפוס חדש>'".
+       RevitAPI/RevitAPIUI מוחרגים במפורש (Private=false ממילא מונע את
+       העתקתם, זו רשת-ביטחון) - אסור להעתיק אותם לתיקיית ה-Add-ins, זה
+       יוצר קונפליקט-גרסאות מול ה-DLL שכבר טעון בתהליך של Revit.
+
+       ContinueOnError="WarnAndContinue": כש-Revit פתוח הוא **נועל** את
+       ה-DLL-ים בתיקיית ה-Add-ins וההעתקה נכשלת. זה לא צריך להכשיל את כל
+       ה-build (הקומפילציה עצמה הצליחה) - מודפסת אזהרה, וצריך לסגור ולפתוח
+       מחדש את Revit כדי שהגרסה החדשה תיטען. -->
   <Target Name="CopyAddinToRevit" AfterTargets="Build">
     <ItemGroup>
-      <RevitAddinFiles Include="$(TargetDir)$(AssemblyName).dll" />
-      <RevitAddinFiles Include="$(TargetDir)$(AssemblyName).pdb" Condition="Exists('$(TargetDir)$(AssemblyName).pdb')" />
+      <RevitAddinFiles Include="$(TargetDir)*.dll" Exclude="$(TargetDir)RevitAPI*.dll" />
+      <RevitAddinFiles Include="$(TargetDir)*.pdb" />
       <RevitAddinFiles Include="$(ProjectDir)PlumbingSystem.addin" />
       <RevitAddinFiles Include="$(ProjectDir)PlumbingSystem.OfficeConfig.txt" />
     </ItemGroup>
     <MakeDir Directories="$(RevitAddinsDir)" Condition="!Exists('$(RevitAddinsDir)')" />
-    <Copy SourceFiles="@(RevitAddinFiles)" DestinationFolder="$(RevitAddinsDir)" SkipUnchangedFiles="false" />
+    <Copy SourceFiles="@(RevitAddinFiles)" DestinationFolder="$(RevitAddinsDir)" SkipUnchangedFiles="false"
+          ContinueOnError="WarnAndContinue" />
+    <Warning Text="לא ניתן להעתיק חלק מקבצי ה-Add-in ל-$(RevitAddinsDir) - כנראה Revit פתוח ונועל אותם. סגור ופתח מחדש את Revit כדי לטעון את הגרסה החדשה."
+             Condition="'$(MSBuildLastTaskResult)' == 'false'" />
   </Target>
 
 </Project>

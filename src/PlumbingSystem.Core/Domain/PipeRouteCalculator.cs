@@ -135,7 +135,15 @@ public static class PipeRouteCalculator
     /// </summary>
     /// <param name="fixture">האסלה - נקודת המוצא של המקטע.</param>
     /// <param name="collector">הקולטן - נקודת הסיום (X,Y) של המקטע.</param>
-    /// <returns>מקטע צינור עם קוטר <see cref="PipeDiameterMm"/> ושיפוע בפועל בטווח התקף.</returns>
+    /// <param name="parameters">
+    /// קוטר (מ"מ) ושיפוע (אחוזים) - ראו <see cref="PipeRouteParameters"/>.
+    /// PIPE Step 3: <c>null</c> (ברירת מחדל) → <see cref="PipeRouteParameters.Default"/>
+    /// (110 מ"מ, 1.75% - הערכים שהיו <c>const</c> לפני חיבור קובץ-ההגדרות);
+    /// נתיב-ההרצה בפועל (<c>DrawPipesCommand</c>) מעביר תמיד ערך מקובץ-
+    /// ההגדרות המשרדי, לא <c>null</c>. **אלגוריתם החישוב זהה לחלוטין** בין
+    /// כה וכה - רק מקור-הקוטר/שיפוע השתנה.
+    /// </param>
+    /// <returns>מקטע צינור עם קוטר <c>parameters.DiameterMm</c> ושיפוע בפועל בטווח התקף.</returns>
     /// <exception cref="ArgumentNullException"><paramref name="fixture"/> או <paramref name="collector"/> הם null.</exception>
     /// <exception cref="InvalidOperationException">
     /// אם השיפוע המחושב בפועל (הפרש Z חלקי מרחק אופקי) יוצא מחוץ לטווח
@@ -143,15 +151,19 @@ public static class PipeRouteCalculator
     /// במבנה הנוכחי זה קורה רק אם המרחק האופקי אפסי/כמעט-אפסי (האסלה
     /// והקולטן כמעט באותה נקודה, X,Y) - מצב מנוון שלא אמור לקרות
     /// בנתונים אמיתיים (הקולטן תמיד עבר wall-snap שהזיז אותו מהאסלה),
-    /// אבל עדיף לזרוק שגיאה ברורה מאשר לחלק באפס בשקט.
+    /// אבל עדיף לזרוק שגיאה ברורה מאשר לחלק באפס בשקט. (יכול לקרות גם אם
+    /// <paramref name="parameters"/> נושא שיפוע מחוץ ל-1.5%-2.0% - חוק 2
+    /// עדיין נאכף כאן, לא נעקף.)
     /// </exception>
-    public static PipeSegment Calculate(ToiletFixture fixture, CollectorPoint collector)
+    public static PipeSegment Calculate(
+        ToiletFixture fixture, CollectorPoint collector, PipeRouteParameters? parameters = null)
     {
         ArgumentNullException.ThrowIfNull(fixture);
         ArgumentNullException.ThrowIfNull(collector);
+        parameters ??= PipeRouteParameters.Default;
 
         double horizontalDistance = GeometryUtils.Distance2D(fixture.Location, collector.Location);
-        double zDrop = horizontalDistance * (DefaultSlopePercent / 100.0);
+        double zDrop = horizontalDistance * (parameters.SlopePercent / 100.0);
         double endZ = fixture.Location.Z - zDrop;
 
         double computedSlopePercent = horizontalDistance > 1e-9
@@ -175,7 +187,7 @@ public static class PipeRouteCalculator
             id: BuildRouteId(fixture, collector),
             startPoint: fixture.Location,
             endPoint: endPoint,
-            diameterMm: PipeDiameterMm,
+            diameterMm: parameters.DiameterMm,
             slopePercent: computedSlopePercent);
     }
 
@@ -249,7 +261,17 @@ public static class PipeRouteCalculator
     /// ואורכם הכולל (אורך-בפועל של הצינור, לא המרחק האווירי) לא עובר
     /// את <see cref="CollectorLocator.MaxDistanceMeters"/>.
     /// </returns>
-    /// <exception cref="ArgumentNullException">אחד הפרמטרים הוא null.</exception>
+    /// <param name="parameters">
+    /// PIPE Step 3: קוטר (מ"מ) ושיפוע (אחוזים) של המקטעים - ראו
+    /// <see cref="PipeRouteParameters"/>. <c>null</c> (ברירת מחדל) →
+    /// <see cref="PipeRouteParameters.Default"/> (110 מ"מ, 1.75%); נתיב-
+    /// ההרצה בפועל (<c>DrawPipesCommand</c>) מעביר תמיד ערך מקובץ-ההגדרות
+    /// המשרדי. **כל הבנייה הגיאומטרית זהה לחלוטין** (זווית 90° מדויקת,
+    /// פתרון-הצטלבות, מגבלת 4.0 מ', בחירת-צד) - רק ה-<c>Z-drop</c> של כל
+    /// <c>leg</c> נגזר מ-<c>parameters.SlopePercent</c> והקוטר מ-
+    /// <c>parameters.DiameterMm</c>.
+    /// </param>
+    /// <exception cref="ArgumentNullException"><paramref name="fixture"/> או <paramref name="collector"/> הם null.</exception>
     /// <exception cref="InvalidOperationException">
     /// אם המרחק האופקי (אסלה-קולטן) אפסי/כמעט-אפסי (כמו ב-<see cref="Calculate"/>);
     /// אם אחד משני האורכים המחושבים (<c>t1</c>/<c>t2</c>) יוצא שלילי -
@@ -268,10 +290,12 @@ public static class PipeRouteCalculator
         CollectorPoint collector,
         WallEdgeSnapper.WallSegment blockingWall,
         bool useOppositeSide = false,
-        bool useWallDirectionAsReference = false)
+        bool useWallDirectionAsReference = false,
+        PipeRouteParameters? parameters = null)
     {
         ArgumentNullException.ThrowIfNull(fixture);
         ArgumentNullException.ThrowIfNull(collector);
+        parameters ??= PipeRouteParameters.Default;
 
         double totalHorizontalDistance = GeometryUtils.Distance2D(fixture.Location, collector.Location);
         if (totalHorizontalDistance <= 1e-9)
@@ -316,11 +340,11 @@ public static class PipeRouteCalculator
         double waypointX = fixture.Location.X + (t1 * u1X);
         double waypointY = fixture.Location.Y + (t1 * u1Y);
 
-        double leg1ZDrop = t1 * (DefaultSlopePercent / 100.0);
+        double leg1ZDrop = t1 * (parameters.SlopePercent / 100.0);
         double waypointZ = fixture.Location.Z - leg1ZDrop;
         var waypoint = new Point3D(waypointX, waypointY, waypointZ);
 
-        double leg2ZDrop = t2 * (DefaultSlopePercent / 100.0);
+        double leg2ZDrop = t2 * (parameters.SlopePercent / 100.0);
         double collectorEndZ = waypointZ - leg2ZDrop;
         var collectorEndPoint = new Point3D(collector.Location.X, collector.Location.Y, collectorEndZ);
 
@@ -343,15 +367,15 @@ public static class PipeRouteCalculator
             id: $"{routeId}-leg1",
             startPoint: fixture.Location,
             endPoint: waypoint,
-            diameterMm: PipeDiameterMm,
-            slopePercent: DefaultSlopePercent);
+            diameterMm: parameters.DiameterMm,
+            slopePercent: parameters.SlopePercent);
 
         var leg2 = new PipeSegment(
             id: $"{routeId}-leg2",
             startPoint: waypoint,
             endPoint: collectorEndPoint,
-            diameterMm: PipeDiameterMm,
-            slopePercent: DefaultSlopePercent);
+            diameterMm: parameters.DiameterMm,
+            slopePercent: parameters.SlopePercent);
 
         return new[] { leg1, leg2 };
     }
@@ -402,8 +426,17 @@ public static class PipeRouteCalculator
     /// הביניים "רץ" לאורך הקיר (לא לאורך הקו הישר המקורי), עם דרגת-
     /// החופש (אורך-הביניים) עדיין קיימת. ראו docs/step7.md.
     /// </param>
+    /// <param name="parameters">
+    /// PIPE Step 3: קוטר (מ"מ) ושיפוע (אחוזים) של המקטעים - ראו
+    /// <see cref="PipeRouteParameters"/>. <c>null</c> (ברירת מחדל) →
+    /// <see cref="PipeRouteParameters.Default"/> (110 מ"מ, 1.75%); נתיב-
+    /// ההרצה בפועל (<c>DrawPipesCommand</c>) מעביר תמיד ערך מקובץ-ההגדרות
+    /// המשרדי. **כל הבנייה הגיאומטרית זהה לחלוטין** - רק ה-<c>Z-drop</c>
+    /// של כל מקטע נגזר מ-<c>parameters.SlopePercent</c> והקוטר מ-
+    /// <c>parameters.DiameterMm</c>.
+    /// </param>
     /// <returns>שלושה מקטעי צינור רציפים: אסלה→waypoint1→waypoint2→קולטן, שיפוע נשמר על פני האורך הכולל (כל מקטע לפי אורכו-שלו).</returns>
-    /// <exception cref="ArgumentNullException">אחד הפרמטרים הוא null.</exception>
+    /// <exception cref="ArgumentNullException"><paramref name="fixture"/> או <paramref name="collector"/> הם null.</exception>
     /// <exception cref="InvalidOperationException">
     /// אם המרחק האופקי אפסי/כמעט-אפסי; אם אחד משני מקטעי-הקצה (<c>t1</c>/<c>t3</c>)
     /// יוצא שלילי (לא ניתן לבנות מסלול-תקין לגיאומטריה/פרמטרים הנתונים);
@@ -415,10 +448,12 @@ public static class PipeRouteCalculator
         WallEdgeSnapper.WallSegment blockingWall,
         double crossoverLengthMeters,
         bool useOppositeSide = false,
-        bool useWallDirectionAsReference = false)
+        bool useWallDirectionAsReference = false,
+        PipeRouteParameters? parameters = null)
     {
         ArgumentNullException.ThrowIfNull(fixture);
         ArgumentNullException.ThrowIfNull(collector);
+        parameters ??= PipeRouteParameters.Default;
 
         double totalHorizontalDistance = GeometryUtils.Distance2D(fixture.Location, collector.Location);
         if (totalHorizontalDistance <= 1e-9)
@@ -463,17 +498,17 @@ public static class PipeRouteCalculator
 
         double waypoint1X = fixture.Location.X + (t1 * u1X);
         double waypoint1Y = fixture.Location.Y + (t1 * u1Y);
-        double leg1ZDrop = t1 * (DefaultSlopePercent / 100.0);
+        double leg1ZDrop = t1 * (parameters.SlopePercent / 100.0);
         double waypoint1Z = fixture.Location.Z - leg1ZDrop;
         var waypoint1 = new Point3D(waypoint1X, waypoint1Y, waypoint1Z);
 
         double waypoint2X = waypoint1X + (crossoverLengthMeters * referenceX);
         double waypoint2Y = waypoint1Y + (crossoverLengthMeters * referenceY);
-        double crossoverZDrop = crossoverLengthMeters * (DefaultSlopePercent / 100.0);
+        double crossoverZDrop = crossoverLengthMeters * (parameters.SlopePercent / 100.0);
         double waypoint2Z = waypoint1Z - crossoverZDrop;
         var waypoint2 = new Point3D(waypoint2X, waypoint2Y, waypoint2Z);
 
-        double leg3ZDrop = t3 * (DefaultSlopePercent / 100.0);
+        double leg3ZDrop = t3 * (parameters.SlopePercent / 100.0);
         double collectorEndZ = waypoint2Z - leg3ZDrop;
         var collectorEndPoint = new Point3D(collector.Location.X, collector.Location.Y, collectorEndZ);
 
@@ -483,22 +518,22 @@ public static class PipeRouteCalculator
             id: $"{routeId}-leg1",
             startPoint: fixture.Location,
             endPoint: waypoint1,
-            diameterMm: PipeDiameterMm,
-            slopePercent: DefaultSlopePercent);
+            diameterMm: parameters.DiameterMm,
+            slopePercent: parameters.SlopePercent);
 
         var crossover = new PipeSegment(
             id: $"{routeId}-crossover",
             startPoint: waypoint1,
             endPoint: waypoint2,
-            diameterMm: PipeDiameterMm,
-            slopePercent: DefaultSlopePercent);
+            diameterMm: parameters.DiameterMm,
+            slopePercent: parameters.SlopePercent);
 
         var leg3 = new PipeSegment(
             id: $"{routeId}-leg3",
             startPoint: waypoint2,
             endPoint: collectorEndPoint,
-            diameterMm: PipeDiameterMm,
-            slopePercent: DefaultSlopePercent);
+            diameterMm: parameters.DiameterMm,
+            slopePercent: parameters.SlopePercent);
 
         return new[] { leg1, crossover, leg3 };
     }
